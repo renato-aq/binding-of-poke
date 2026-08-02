@@ -1,0 +1,14 @@
+#ifndef BIND_OF_POKE_CONFIG_H
+#define BIND_OF_POKE_CONFIG_H
+
+enum {
+    LOGICAL_WIDTH = 960,
+    LOGICAL_HEIGHT = 540,
+    PLAYER_SIZE = 40,
+    PROJECTILE_SIZE = 10,
+    MAX_PROJECTILES = 64,
+};
+
+#define FIXED_TIMESTEP (1.0f / 60.0f)
+
+#endif
