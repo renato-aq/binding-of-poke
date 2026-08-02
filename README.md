@@ -19,6 +19,16 @@ Pokémon branding and characters with original content.
 - Pause and clean shutdown behavior
 - Pure-C gameplay tests available through `make test`
 
+### Milestone 2 — Combat Room: Complete
+
+- Yellow player with independent movement and aiming
+- Player and hostile projectiles with centralized damage rules
+- Chaser and Spitter enemy behaviors
+- Fixed-capacity entity pools with generation-checked handles
+- Solid room bounds, authored walls, and collision layers
+- Doors locked during combat and opened when the room is cleared
+- Health, damage invulnerability, death, and combat restart flow
+
 ## Requirements
 
 - A C17 compiler
@@ -45,6 +55,7 @@ Prototype controls:
 - Move with WASD or the arrow keys.
 - Shoot with IJKL or hold the left mouse button and aim with the mouse.
 - Press P to pause or resume.
+- Press R after dying to restart the combat room.
 - Press Escape to quit.
 
 For a debug build:

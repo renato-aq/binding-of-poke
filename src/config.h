@@ -6,7 +6,11 @@ enum {
     LOGICAL_HEIGHT = 540,
     PLAYER_SIZE = 40,
     PROJECTILE_SIZE = 10,
-    MAX_PROJECTILES = 64,
+    ENEMY_SIZE = 36,
+    MAX_PROJECTILES = 96,
+    MAX_ENEMIES = 16,
+    MAX_WALLS = 8,
+    ROOM_INSET = 28,
 };
 
 #define FIXED_TIMESTEP (1.0f / 60.0f)

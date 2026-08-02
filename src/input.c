@@ -27,6 +27,9 @@ void input_poll(AppInput *input, const Platform *platform, const Game *game)
             if (event.key.keysym.sym == SDLK_p) {
                 input->game.toggle_pause = true;
             }
+            if (event.key.keysym.sym == SDLK_r) {
+                input->game.restart = true;
+            }
         }
     }
 
@@ -58,8 +61,8 @@ void input_poll(AppInput *input, const Platform *platform, const Game *game)
         float logical_y = 0.0f;
         platform_window_to_logical(platform, mouse_x, mouse_y, &logical_x, &logical_y);
         Vector2 aim = {
-            .x = logical_x - (game->player_position.x + (float)PLAYER_SIZE / 2.0f),
-            .y = logical_y - (game->player_position.y + (float)PLAYER_SIZE / 2.0f),
+            .x = logical_x - (game->player.position.x + (float)PLAYER_SIZE / 2.0f),
+            .y = logical_y - (game->player.position.y + (float)PLAYER_SIZE / 2.0f),
         };
         float length_squared = aim.x * aim.x + aim.y * aim.y;
 
