@@ -3,7 +3,7 @@ TARGET := build/bind-of-poke
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=build/%.o)
 TEST_TARGET := build/test-game
-TEST_OBJECTS := build/test_game.o build/game.o
+TEST_OBJECTS := build/test_game.o build/game.o build/floor.o build/rng.o
 DEPFILES := $(OBJECTS:.o=.d) build/test_game.d
 
 CPPFLAGS := $(shell sdl2-config --cflags)

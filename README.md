@@ -29,6 +29,16 @@ Pokémon branding and characters with original content.
 - Doors locked during combat and opened when the room is cleared
 - Health, damage invulnerability, death, and combat restart flow
 
+### Milestone 3 — Procedural Floor: Complete
+
+- Deterministic ten-room floors generated from a reusable seed
+- Connected start, combat, reward, shop, secret, and boss rooms
+- Three authored room templates selected by the generator
+- Door-based room transitions and persistent clear state
+- Minimap discovery and room-type markers
+- Automatic reachability and door validation with a fallback layout
+- Generation regression coverage across more than 100 seeds
+
 ## Requirements
 
 - A C17 compiler
@@ -46,6 +56,12 @@ brew install sdl2
 ```sh
 make
 make run
+```
+
+To replay a particular floor seed:
+
+```sh
+./build/bind-of-poke 424242
 ```
 
 Press Escape or close the window to exit.

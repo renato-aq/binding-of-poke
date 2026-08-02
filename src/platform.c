@@ -85,3 +85,10 @@ void platform_window_to_logical(const Platform *platform, int window_x, int wind
 {
     SDL_RenderWindowToLogical(platform->renderer, window_x, window_y, logical_x, logical_y);
 }
+
+void platform_set_seed_title(Platform *platform, uint32_t seed)
+{
+    char title[96];
+    (void)snprintf(title, sizeof(title), "Bind of Poke - Floor Seed: %u", seed);
+    SDL_SetWindowTitle(platform->window, title);
+}

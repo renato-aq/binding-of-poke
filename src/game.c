@@ -49,6 +49,7 @@ static Rectangle projectile_bounds(const Projectile *projectile)
 
 static bool collides_with_world(const Game *game, Rectangle bounds)
 {
+    const Room *room = floor_current_room_const(&game->floor);
     if (bounds.x < 0.0f || bounds.y < 0.0f ||
         bounds.x + bounds.width > LOGICAL_WIDTH ||
         bounds.y + bounds.height > LOGICAL_HEIGHT) {
@@ -62,23 +63,25 @@ static bool collides_with_world(const Game *game, Rectangle bounds)
         bounds.y >= (float)LOGICAL_HEIGHT / 2.0f - DOOR_HALF_WIDTH &&
         bounds.y + bounds.height <= (float)LOGICAL_HEIGHT / 2.0f + DOOR_HALF_WIDTH;
 
-    if (bounds.x < ROOM_INSET && !(game->room.doors_open && inside_vertical_door)) {
+    if (bounds.x < ROOM_INSET &&
+        !(room->doors_open && (room->door_mask & DOOR_LEFT) != 0U && inside_vertical_door)) {
         return true;
     }
     if (bounds.x + bounds.width > LOGICAL_WIDTH - ROOM_INSET &&
-        !(game->room.doors_open && inside_vertical_door)) {
+        !(room->doors_open && (room->door_mask & DOOR_RIGHT) != 0U && inside_vertical_door)) {
         return true;
     }
-    if (bounds.y < ROOM_INSET && !(game->room.doors_open && inside_horizontal_door)) {
+    if (bounds.y < ROOM_INSET &&
+        !(room->doors_open && (room->door_mask & DOOR_UP) != 0U && inside_horizontal_door)) {
         return true;
     }
     if (bounds.y + bounds.height > LOGICAL_HEIGHT - ROOM_INSET &&
-        !(game->room.doors_open && inside_horizontal_door)) {
+        !(room->doors_open && (room->door_mask & DOOR_DOWN) != 0U && inside_horizontal_door)) {
         return true;
     }
 
-    for (int index = 0; index < game->room.wall_count; ++index) {
-        if (rectangles_overlap(bounds, game->room.walls[index])) {
+    for (int index = 0; index < room->wall_count; ++index) {
+        if (rectangles_overlap(bounds, room->walls[index])) {
             return true;
         }
     }
@@ -137,18 +140,6 @@ static void fire_player_projectile(Game *game)
                      FACTION_PLAYER, 1);
 }
 
-static void initialize_room(Game *game)
-{
-    game->room = (Room) {
-        .walls = {
-            { 260.0f, 190.0f, 70.0f, 160.0f },
-            { 630.0f, 190.0f, 70.0f, 160.0f },
-            { 430.0f, 105.0f, 100.0f, 45.0f },
-        },
-        .wall_count = 3,
-    };
-}
-
 EntityHandle game_spawn_enemy(Game *game, EnemyKind kind, Vector2 position)
 {
     Rectangle spawn_bounds = { position.x, position.y, ENEMY_SIZE, ENEMY_SIZE };
@@ -191,7 +182,47 @@ EntityHandle game_spawn_enemy(Game *game, EnemyKind kind, Vector2 position)
     return (EntityHandle) { 0 };
 }
 
-static void initialize_game(Game *game, uint32_t run_generation)
+static void clear_room_entities(Game *game)
+{
+    for (int index = 0; index < MAX_ENEMIES; ++index) {
+        game->enemies[index].active = false;
+    }
+    for (int index = 0; index < MAX_PROJECTILES; ++index) {
+        game->projectiles[index].active = false;
+    }
+}
+
+static void load_current_room(Game *game)
+{
+    clear_room_entities(game);
+    Room *room = floor_current_room(&game->floor);
+    room->visited = true;
+
+    if (room->cleared) {
+        room->doors_open = true;
+        return;
+    }
+
+    room->doors_open = false;
+    game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 150.0f, 110.0f });
+    game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 774.0f, 110.0f });
+    game_spawn_enemy(game, ENEMY_SPITTER, (Vector2) { 462.0f, 390.0f });
+    if (room->type == ROOM_BOSS) {
+        game_spawn_enemy(game, ENEMY_SPITTER, (Vector2) { 462.0f, 190.0f });
+    }
+}
+
+bool game_enter_room(Game *game, int room_index)
+{
+    if (room_index < 0 || room_index >= game->floor.room_count) {
+        return false;
+    }
+    game->floor.current_room = room_index;
+    load_current_room(game);
+    return true;
+}
+
+static bool initialize_game(Game *game, uint32_t run_generation, uint32_t seed)
 {
     *game = (Game) { 0 };
     game->run_generation = run_generation == 0 ? 1 : run_generation;
@@ -202,15 +233,21 @@ static void initialize_game(Game *game, uint32_t run_generation)
         .generation = 1,
     };
     game->aim_direction = (Vector2) { 0.0f, -1.0f };
-    initialize_room(game);
-    game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 170.0f, 120.0f });
-    game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 750.0f, 120.0f });
-    game_spawn_enemy(game, ENEMY_SPITTER, (Vector2) { 462.0f, 210.0f });
+    if (!floor_generate(&game->floor, seed)) {
+        return false;
+    }
+    load_current_room(game);
+    return true;
 }
 
 void game_init(Game *game)
 {
-    initialize_game(game, 1);
+    (void)initialize_game(game, 1, 0xB10D2026U);
+}
+
+bool game_init_with_seed(Game *game, uint32_t seed)
+{
+    return initialize_game(game, 1, seed);
 }
 
 void game_restart(Game *game)
@@ -219,7 +256,8 @@ void game_restart(Game *game)
     if (next_generation == 0U) {
         next_generation = 1U;
     }
-    initialize_game(game, next_generation);
+    uint32_t seed = game->floor.seed;
+    (void)initialize_game(game, next_generation, seed);
 }
 
 EntityHandle game_player_handle(const Game *game)
@@ -370,6 +408,53 @@ static void update_projectiles(Game *game, float delta_time)
     }
 }
 
+static bool direction_available(const Room *room, Direction direction)
+{
+    return (room->door_mask & (1U << (unsigned int)direction)) != 0U;
+}
+
+static bool try_room_transition(Game *game, Vector2 movement, float delta_time)
+{
+    Room *room = floor_current_room(&game->floor);
+    if (!room->doors_open) {
+        return false;
+    }
+
+    float next_x = game->player.position.x + movement.x * PLAYER_SPEED * delta_time;
+    float next_y = game->player.position.y + movement.y * PLAYER_SPEED * delta_time;
+    Direction direction = DIRECTION_COUNT;
+    if (next_x < 0.0f) {
+        direction = DIRECTION_LEFT;
+    } else if (next_x + PLAYER_SIZE > LOGICAL_WIDTH) {
+        direction = DIRECTION_RIGHT;
+    } else if (next_y < 0.0f) {
+        direction = DIRECTION_UP;
+    } else if (next_y + PLAYER_SIZE > LOGICAL_HEIGHT) {
+        direction = DIRECTION_DOWN;
+    }
+
+    if (direction == DIRECTION_COUNT || !direction_available(room, direction)) {
+        return false;
+    }
+    int neighbor = floor_neighbor(&game->floor, game->floor.current_room, direction);
+    if (neighbor < 0) {
+        return false;
+    }
+
+    game->floor.current_room = neighbor;
+    if (direction == DIRECTION_LEFT) {
+        game->player.position.x = LOGICAL_WIDTH - ROOM_INSET - PLAYER_SIZE;
+    } else if (direction == DIRECTION_RIGHT) {
+        game->player.position.x = ROOM_INSET;
+    } else if (direction == DIRECTION_UP) {
+        game->player.position.y = LOGICAL_HEIGHT - ROOM_INSET - PLAYER_SIZE;
+    } else {
+        game->player.position.y = ROOM_INSET;
+    }
+    load_current_room(game);
+    return true;
+}
+
 void game_update(Game *game, const GameInput *input, float delta_time)
 {
     if (game->paused || game->game_over) {
@@ -383,8 +468,10 @@ void game_update(Game *game, const GameInput *input, float delta_time)
         input->move_direction.x * PLAYER_SPEED,
         input->move_direction.y * PLAYER_SPEED,
     };
-    move_with_world_collision(game, &game->player.position, PLAYER_SIZE,
-                              player_velocity, delta_time);
+    if (!try_room_transition(game, input->move_direction, delta_time)) {
+        move_with_world_collision(game, &game->player.position, PLAYER_SIZE,
+                                  player_velocity, delta_time);
+    }
 
     if (game->player.invulnerability > 0.0f) {
         game->player.invulnerability -= delta_time;
@@ -401,8 +488,9 @@ void game_update(Game *game, const GameInput *input, float delta_time)
     update_projectiles(game, delta_time);
 
     if (game_active_enemy_count(game) == 0) {
-        game->room.cleared = true;
-        game->room.doors_open = true;
+        Room *room = floor_current_room(&game->floor);
+        room->cleared = true;
+        room->doors_open = true;
     }
 }
 

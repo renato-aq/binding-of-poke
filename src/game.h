@@ -5,18 +5,12 @@
 #include <stdint.h>
 
 #include "config.h"
+#include "floor.h"
 
 typedef struct Vector2 {
     float x;
     float y;
 } Vector2;
-
-typedef struct Rectangle {
-    float x;
-    float y;
-    float width;
-    float height;
-} Rectangle;
 
 typedef enum Faction {
     FACTION_PLAYER,
@@ -87,19 +81,12 @@ typedef struct Projectile {
     bool active;
 } Projectile;
 
-typedef struct Room {
-    Rectangle walls[MAX_WALLS];
-    int wall_count;
-    bool doors_open;
-    bool cleared;
-} Room;
-
 typedef struct Game {
     Player player;
     Vector2 aim_direction;
     Enemy enemies[MAX_ENEMIES];
     Projectile projectiles[MAX_PROJECTILES];
-    Room room;
+    Floor floor;
     float shot_cooldown;
     uint32_t run_generation;
     bool paused;
@@ -107,7 +94,9 @@ typedef struct Game {
 } Game;
 
 void game_init(Game *game);
+bool game_init_with_seed(Game *game, uint32_t seed);
 void game_restart(Game *game);
+bool game_enter_room(Game *game, int room_index);
 void game_handle_actions(Game *game, const GameInput *input);
 void game_update(Game *game, const GameInput *input, float delta_time);
 EntityHandle game_player_handle(const Game *game);

@@ -1,5 +1,8 @@
 #include <stdbool.h>
+#include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "config.h"
 #include "game.h"
@@ -9,15 +12,39 @@
 
 enum { MAX_UPDATES_PER_FRAME = 8 };
 
-int main(void)
+static bool parse_seed(const char *text, uint32_t *seed)
 {
+    char *end = NULL;
+    errno = 0;
+    unsigned long value = strtoul(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || value > UINT32_MAX) {
+        return false;
+    }
+    *seed = (uint32_t)value;
+    return true;
+}
+
+int main(int argument_count, char *arguments[])
+{
+    uint32_t seed = 0xB10D2026U;
+    if (argument_count > 2 ||
+        (argument_count == 2 && !parse_seed(arguments[1], &seed))) {
+        fprintf(stderr, "Usage: %s [unsigned-seed]\n", arguments[0]);
+        return 1;
+    }
+
     Platform platform;
     if (!platform_init(&platform)) {
         return 1;
     }
 
     Game game;
-    game_init(&game);
+    if (!game_init_with_seed(&game, seed)) {
+        fprintf(stderr, "Floor generation failed for seed %u.\n", seed);
+        platform_shutdown(&platform);
+        return 1;
+    }
+    platform_set_seed_title(&platform, game.floor.seed);
 
     bool running = true;
     double accumulator = 0.0;

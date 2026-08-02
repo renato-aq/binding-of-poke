@@ -11,6 +11,8 @@ enum {
     MAX_ENEMIES = 16,
     MAX_WALLS = 8,
     ROOM_INSET = 28,
+    MAX_FLOOR_ROOMS = 10,
+    FLOOR_GRID_SIZE = 7,
 };
 
 #define FIXED_TIMESTEP (1.0f / 60.0f)
