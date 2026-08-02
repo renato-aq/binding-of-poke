@@ -1,4 +1,6 @@
 build/
 docs/
 AGENTS.md
+bind-of-poke.save
+bind-of-poke.save.tmp
 .DS_Store

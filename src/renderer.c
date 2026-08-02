@@ -50,15 +50,17 @@ static void update_window_title(SDL_Renderer *renderer, const Game *game)
             (void)snprintf(price, sizeof(price), " | Requires 1 key");
         }
         (void)snprintf(title, sizeof(title),
-                       "Seed %u | HP %d/%d C:%d K:%d B:%d DMG:+%d RATE:%d%% SPD:%d%% PIERCE:%d | %s%s",
-                       game->floor.seed, game->player.health, game->player.maximum_health,
+                       "Seed %u | Wins:%u HP %d/%d C:%d K:%d B:%d DMG:+%d RATE:%d%% SPD:%d%% PIERCE:%d | %s%s",
+                       game->floor.seed, game->completed_runs,
+                       game->player.health, game->player.maximum_health,
                        game->inventory.coins, game->inventory.keys, game->inventory.bombs,
                        game->inventory.damage_bonus, rate_percent, speed_percent,
                        game->inventory.pierce_bonus, pickup_description(nearby->kind), price);
     } else {
         (void)snprintf(title, sizeof(title),
-                       "Seed %u | HP %d/%d C:%d K:%d B:%d DMG:+%d RATE:%d%% SPD:%d%% PIERCE:%d",
-                       game->floor.seed, game->player.health, game->player.maximum_health,
+                       "Seed %u | Wins:%u HP %d/%d C:%d K:%d B:%d DMG:+%d RATE:%d%% SPD:%d%% PIERCE:%d",
+                       game->floor.seed, game->completed_runs,
+                       game->player.health, game->player.maximum_health,
                        game->inventory.coins, game->inventory.keys, game->inventory.bombs,
                        game->inventory.damage_bonus, rate_percent, speed_percent,
                        game->inventory.pierce_bonus);
@@ -178,7 +180,7 @@ static void draw_inventory(SDL_Renderer *renderer, const Game *game)
     }
 }
 
-static void draw_overlay(SDL_Renderer *renderer, bool game_over)
+static void draw_overlay(SDL_Renderer *renderer, bool game_over, bool victory)
 {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 8, 10, 16, 185);
@@ -191,6 +193,12 @@ static void draw_overlay(SDL_Renderer *renderer, bool game_over)
         SDL_Rect vertical = { LOGICAL_WIDTH / 2 - 10, LOGICAL_HEIGHT / 2 - 60, 20, 120 };
         SDL_RenderFillRect(renderer, &horizontal);
         SDL_RenderFillRect(renderer, &vertical);
+    } else if (victory) {
+        SDL_SetRenderDrawColor(renderer, 72, 220, 126, 255);
+        SDL_Rect left = { LOGICAL_WIDTH / 2 - 58, LOGICAL_HEIGHT / 2, 52, 18 };
+        SDL_Rect right = { LOGICAL_WIDTH / 2 - 15, LOGICAL_HEIGHT / 2 - 32, 90, 18 };
+        SDL_RenderFillRect(renderer, &left);
+        SDL_RenderFillRect(renderer, &right);
     } else {
         SDL_SetRenderDrawColor(renderer, 255, 236, 80, 255);
         SDL_Rect left_bar = { LOGICAL_WIDTH / 2 - 34, LOGICAL_HEIGHT / 2 - 48, 22, 96 };
@@ -243,6 +251,31 @@ void renderer_draw(SDL_Renderer *renderer, const Game *game)
             (int)enemy->position.x, (int)enemy->position.y, ENEMY_SIZE, ENEMY_SIZE
         };
         SDL_RenderFillRect(renderer, &enemy_rect);
+    }
+
+    if (game->boss.active) {
+        if (game->boss.state == BOSS_CHARGE_TELEGRAPH) {
+            SDL_SetRenderDrawColor(renderer, 255, 196, 56, 255);
+        } else if (game->boss.health <= game->boss.maximum_health / 2) {
+            SDL_SetRenderDrawColor(renderer, 232, 62, 82, 255);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 194, 72, 210, 255);
+        }
+        SDL_Rect boss_rect = {
+            (int)game->boss.position.x, (int)game->boss.position.y,
+            BOSS_SIZE, BOSS_SIZE
+        };
+        SDL_RenderFillRect(renderer, &boss_rect);
+
+        SDL_SetRenderDrawColor(renderer, 58, 34, 42, 255);
+        SDL_Rect bar_background = { 280, LOGICAL_HEIGHT - 24, 400, 10 };
+        SDL_RenderFillRect(renderer, &bar_background);
+        SDL_SetRenderDrawColor(renderer, 220, 58, 78, 255);
+        SDL_Rect bar = {
+            280, LOGICAL_HEIGHT - 24,
+            400 * game->boss.health / game->boss.maximum_health, 10
+        };
+        SDL_RenderFillRect(renderer, &bar);
     }
 
     bool player_visible = game->player.invulnerability <= 0.0f ||
@@ -314,8 +347,8 @@ void renderer_draw(SDL_Renderer *renderer, const Game *game)
     draw_health(renderer, game);
     draw_inventory(renderer, game);
     draw_minimap(renderer, &game->floor);
-    if (game->paused || game->game_over) {
-        draw_overlay(renderer, game->game_over);
+    if (game->paused || game->game_over || game->victory) {
+        draw_overlay(renderer, game->game_over, game->victory);
     }
     SDL_RenderPresent(renderer);
 }

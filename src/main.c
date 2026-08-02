@@ -9,6 +9,7 @@
 #include "input.h"
 #include "platform.h"
 #include "renderer.h"
+#include "save.h"
 
 enum { MAX_UPDATES_PER_FRAME = 8 };
 
@@ -38,19 +39,29 @@ int main(int argument_count, char *arguments[])
         return 1;
     }
 
+    SaveData save_data;
+    (void)save_data_load("bind-of-poke.save", &save_data);
+
     Game game;
     if (!game_init_with_seed(&game, seed)) {
         fprintf(stderr, "Floor generation failed for seed %u.\n", seed);
         platform_shutdown(&platform);
         return 1;
     }
+    game.completed_runs = save_data.completed_runs;
     platform_set_seed_title(&platform, game.floor.seed);
 
     bool running = true;
     double accumulator = 0.0;
+    bool victory_saved = false;
+    double save_retry_timer = 0.0;
 
     while (running) {
-        accumulator += platform_frame_time(&platform);
+        double frame_time = platform_frame_time(&platform);
+        accumulator += frame_time;
+        if (save_retry_timer > 0.0) {
+            save_retry_timer -= frame_time;
+        }
 
         AppInput input;
         input_poll(&input, &platform, &game);
@@ -68,6 +79,19 @@ int main(int argument_count, char *arguments[])
         }
         if (update_count == MAX_UPDATES_PER_FRAME) {
             accumulator = 0.0;
+        }
+
+        if (game.victory && !victory_saved && save_retry_timer <= 0.0) {
+            save_data.completed_runs = game.completed_runs;
+            save_data.boss_defeated = true;
+            victory_saved = save_data_write("bind-of-poke.save", &save_data);
+            if (!victory_saved) {
+                fprintf(stderr, "Could not write save data.\n");
+                save_retry_timer = 2.0;
+            }
+        } else if (!game.victory) {
+            victory_saved = false;
+            save_retry_timer = 0.0;
         }
 
         renderer_draw(platform.renderer, &game);

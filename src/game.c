@@ -42,6 +42,13 @@ static Rectangle enemy_bounds(const Enemy *enemy)
     return (Rectangle) { enemy->position.x, enemy->position.y, ENEMY_SIZE, ENEMY_SIZE };
 }
 
+static Rectangle boss_bounds(const Game *game)
+{
+    return (Rectangle) {
+        game->boss.position.x, game->boss.position.y, BOSS_SIZE, BOSS_SIZE
+    };
+}
+
 static Rectangle projectile_bounds(const Projectile *projectile)
 {
     return (Rectangle) {
@@ -137,6 +144,7 @@ static void spawn_projectile(Game *game, Vector2 center, Vector2 direction,
             projectile->remaining_pierces =
                 faction == FACTION_PLAYER ? game->inventory.pierce_bonus : 0;
             projectile->hit_enemy_mask = 0U;
+            projectile->hit_boss = false;
             projectile->active = true;
             return;
         }
@@ -279,6 +287,7 @@ static void clear_room_entities(Game *game)
     for (int index = 0; index < MAX_BOMBS; ++index) {
         game->placed_bombs[index].active = false;
     }
+    game->boss.active = false;
 }
 
 static void load_current_room(Game *game)
@@ -295,11 +304,24 @@ static void load_current_room(Game *game)
     }
 
     room->doors_open = false;
-    game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 150.0f, 110.0f });
-    game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 774.0f, 110.0f });
-    game_spawn_enemy(game, ENEMY_SPITTER, (Vector2) { 462.0f, 390.0f });
     if (room->type == ROOM_BOSS) {
-        game_spawn_enemy(game, ENEMY_SPITTER, (Vector2) { 462.0f, 190.0f });
+        ++game->boss.generation;
+        if (game->boss.generation == 0) {
+            ++game->boss.generation;
+        }
+        game->boss = (Boss) {
+            .position = { 444.0f, 190.0f },
+            .state = BOSS_INTRO,
+            .health = 30,
+            .maximum_health = 30,
+            .state_timer = 0.9f,
+            .generation = game->boss.generation,
+            .active = true,
+        };
+    } else {
+        game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 150.0f, 110.0f });
+        game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 774.0f, 110.0f });
+        game_spawn_enemy(game, ENEMY_SPITTER, (Vector2) { 462.0f, 390.0f });
     }
 }
 
@@ -313,10 +335,12 @@ bool game_enter_room(Game *game, int room_index)
     return true;
 }
 
-static bool initialize_game(Game *game, uint32_t run_generation, uint32_t seed)
+static bool initialize_game(Game *game, uint32_t run_generation, uint32_t seed,
+                            uint32_t completed_runs)
 {
     *game = (Game) { 0 };
     game->run_generation = run_generation == 0 ? 1 : run_generation;
+    game->completed_runs = completed_runs;
     game->player = (Player) {
         .position = { 460.0f, 440.0f },
         .health = 6,
@@ -339,12 +363,12 @@ static bool initialize_game(Game *game, uint32_t run_generation, uint32_t seed)
 
 void game_init(Game *game)
 {
-    (void)initialize_game(game, 1, 0xB10D2026U);
+    (void)initialize_game(game, 1, 0xB10D2026U, 0U);
 }
 
 bool game_init_with_seed(Game *game, uint32_t seed)
 {
-    return initialize_game(game, 1, seed);
+    return initialize_game(game, 1, seed, 0U);
 }
 
 void game_restart(Game *game)
@@ -354,13 +378,24 @@ void game_restart(Game *game)
         next_generation = 1U;
     }
     uint32_t seed = game->floor.seed;
-    (void)initialize_game(game, next_generation, seed);
+    uint32_t completed_runs = game->completed_runs;
+    if (game->victory) {
+        ++seed;
+    }
+    (void)initialize_game(game, next_generation, seed, completed_runs);
 }
 
 EntityHandle game_player_handle(const Game *game)
 {
     return (EntityHandle) {
         ENTITY_PLAYER, 0, game->player.generation, game->run_generation
+    };
+}
+
+EntityHandle game_boss_handle(const Game *game)
+{
+    return (EntityHandle) {
+        ENTITY_BOSS, 0, game->boss.generation, game->run_generation
     };
 }
 
@@ -376,6 +411,10 @@ bool game_handle_is_valid(const Game *game, EntityHandle handle)
     if (handle.kind == ENTITY_ENEMY && handle.index < MAX_ENEMIES) {
         const Enemy *enemy = &game->enemies[handle.index];
         return enemy->active && enemy->generation == handle.generation;
+    }
+    if (handle.kind == ENTITY_BOSS) {
+        return handle.index == 0 && game->boss.active &&
+               handle.generation == game->boss.generation;
     }
     return false;
 }
@@ -402,6 +441,15 @@ bool game_apply_damage(Game *game, EntityHandle target, Faction source, int amou
     if (source == FACTION_ENEMY) {
         return false;
     }
+    if (target.kind == ENTITY_BOSS) {
+        game->boss.health -= amount;
+        if (game->boss.health <= 0) {
+            game->boss.health = 0;
+            game->boss.active = false;
+        }
+        return true;
+    }
+
     Enemy *enemy = &game->enemies[target.index];
     enemy->health -= amount;
     if (enemy->health <= 0) {
@@ -446,21 +494,24 @@ static void use_active_item(Game *game)
             game_apply_damage(game, handle, FACTION_PLAYER, 2);
         }
     }
+    if (game->boss.active) {
+        game_apply_damage(game, game_boss_handle(game), FACTION_PLAYER, 2);
+    }
 }
 
 void game_handle_actions(Game *game, const GameInput *input)
 {
-    if (input->restart && game->game_over) {
+    if (input->restart && (game->game_over || game->victory)) {
         game_restart(game);
         return;
     }
-    if (input->toggle_pause && !game->game_over) {
+    if (input->toggle_pause && !game->game_over && !game->victory) {
         game->paused = !game->paused;
     }
-    if (!game->paused && !game->game_over && input->place_bomb) {
+    if (!game->paused && !game->game_over && !game->victory && input->place_bomb) {
         place_bomb(game);
     }
-    if (!game->paused && !game->game_over && input->use_active_item) {
+    if (!game->paused && !game->game_over && !game->victory && input->use_active_item) {
         use_active_item(game);
     }
 }
@@ -506,6 +557,114 @@ static void update_enemies(Game *game, float delta_time)
     }
 }
 
+static void boss_fire_spread(Game *game)
+{
+    Vector2 center = {
+        game->boss.position.x + BOSS_SIZE / 2.0f,
+        game->boss.position.y + BOSS_SIZE / 2.0f,
+    };
+    Vector2 to_player = {
+        game->player.position.x + PLAYER_SIZE / 2.0f - center.x,
+        game->player.position.y + PLAYER_SIZE / 2.0f - center.y,
+    };
+    Vector2 direction = normalized(to_player);
+    Vector2 perpendicular = { -direction.y, direction.x };
+    Vector2 left = normalized((Vector2) {
+        direction.x + perpendicular.x * 0.24f,
+        direction.y + perpendicular.y * 0.24f,
+    });
+    Vector2 right = normalized((Vector2) {
+        direction.x - perpendicular.x * 0.24f,
+        direction.y - perpendicular.y * 0.24f,
+    });
+    spawn_projectile(game, center, left, ENEMY_PROJECTILE_SPEED, FACTION_ENEMY, 1);
+    spawn_projectile(game, center, direction, ENEMY_PROJECTILE_SPEED, FACTION_ENEMY, 1);
+    spawn_projectile(game, center, right, ENEMY_PROJECTILE_SPEED, FACTION_ENEMY, 1);
+
+    if (game->boss.health <= game->boss.maximum_health / 2) {
+        static const Vector2 cardinal[4] = {
+            { 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f }
+        };
+        for (int index = 0; index < 4; ++index) {
+            spawn_projectile(game, center, cardinal[index], ENEMY_PROJECTILE_SPEED * 0.8f,
+                             FACTION_ENEMY, 1);
+        }
+    }
+}
+
+static void update_boss(Game *game, float delta_time)
+{
+    Boss *boss = &game->boss;
+    if (!boss->active) {
+        return;
+    }
+
+    boss->state_timer -= delta_time;
+    if (boss->state == BOSS_INTRO) {
+        if (boss->state_timer <= 0.0f) {
+            boss->state = BOSS_AIMED_SPREAD;
+            boss->state_timer = 0.8f;
+            boss->action_performed = false;
+        }
+    } else if (boss->state == BOSS_AIMED_SPREAD) {
+        if (!boss->action_performed && boss->state_timer <= 0.35f) {
+            boss_fire_spread(game);
+            boss->action_performed = true;
+        }
+        if (boss->state_timer <= 0.0f) {
+            Vector2 center = {
+                boss->position.x + BOSS_SIZE / 2.0f,
+                boss->position.y + BOSS_SIZE / 2.0f,
+            };
+            boss->charge_direction = normalized((Vector2) {
+                game->player.position.x + PLAYER_SIZE / 2.0f - center.x,
+                game->player.position.y + PLAYER_SIZE / 2.0f - center.y,
+            });
+            boss->state = BOSS_CHARGE_TELEGRAPH;
+            boss->state_timer = 0.65f;
+            boss->action_performed = false;
+        }
+    } else if (boss->state == BOSS_CHARGE_TELEGRAPH) {
+        if (boss->state_timer <= 0.0f) {
+            boss->state = BOSS_CHARGING;
+            boss->state_timer = 0.7f;
+        }
+    } else if (boss->state == BOSS_CHARGING) {
+        Vector2 before = boss->position;
+        float charge_speed = boss->health <= boss->maximum_health / 2 ? 430.0f : 350.0f;
+        Vector2 velocity = {
+            boss->charge_direction.x * charge_speed,
+            boss->charge_direction.y * charge_speed,
+        };
+        move_with_world_collision(game, &boss->position, BOSS_SIZE, velocity, delta_time);
+        bool stopped = before.x == boss->position.x && before.y == boss->position.y;
+        if (boss->state_timer <= 0.0f || stopped) {
+            boss->state = BOSS_SUMMON;
+            boss->state_timer = 1.0f;
+            boss->action_performed = false;
+        }
+    } else if (boss->state == BOSS_SUMMON) {
+        if (!boss->action_performed) {
+            if (game_active_enemy_count(game) < 4) {
+                game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 130.0f, 390.0f });
+            }
+            if (game_active_enemy_count(game) < 4) {
+                game_spawn_enemy(game, ENEMY_CHASER, (Vector2) { 794.0f, 390.0f });
+            }
+            boss->action_performed = true;
+        }
+        if (boss->state_timer <= 0.0f) {
+            boss->state = BOSS_AIMED_SPREAD;
+            boss->state_timer = boss->health <= boss->maximum_health / 2 ? 0.6f : 0.8f;
+            boss->action_performed = false;
+        }
+    }
+
+    if (rectangles_overlap(boss_bounds(game), player_bounds(game))) {
+        game_apply_damage(game, game_player_handle(game), FACTION_ENEMY, 1);
+    }
+}
+
 static void update_projectiles(Game *game, float delta_time)
 {
     for (int projectile_index = 0; projectile_index < MAX_PROJECTILES; ++projectile_index) {
@@ -530,6 +689,19 @@ static void update_projectiles(Game *game, float delta_time)
                 projectile->active = false;
             }
             continue;
+        }
+
+        if (game->boss.active && !projectile->hit_boss &&
+            rectangles_overlap(bounds, boss_bounds(game))) {
+            game_apply_damage(game, game_boss_handle(game), FACTION_PLAYER,
+                              projectile->damage);
+            projectile->hit_boss = true;
+            if (projectile->remaining_pierces > 0) {
+                --projectile->remaining_pierces;
+            } else {
+                projectile->active = false;
+                continue;
+            }
         }
 
         for (uint16_t enemy_index = 0; enemy_index < MAX_ENEMIES; ++enemy_index) {
@@ -690,6 +862,13 @@ static void update_bombs(Game *game, float delta_time)
                 game_apply_damage(game, handle, FACTION_PLAYER, 2);
             }
         }
+        if (game->boss.active) {
+            float dx = bomb->position.x - (game->boss.position.x + BOSS_SIZE / 2.0f);
+            float dy = bomb->position.y - (game->boss.position.y + BOSS_SIZE / 2.0f);
+            if (dx * dx + dy * dy <= BOMB_RADIUS * BOMB_RADIUS) {
+                game_apply_damage(game, game_boss_handle(game), FACTION_PLAYER, 2);
+            }
+        }
     }
 }
 
@@ -738,7 +917,7 @@ static bool try_room_transition(Game *game, Vector2 movement, float delta_time)
 
 void game_update(Game *game, const GameInput *input, float delta_time)
 {
-    if (game->paused || game->game_over) {
+    if (game->paused || game->game_over || game->victory) {
         return;
     }
 
@@ -767,11 +946,12 @@ void game_update(Game *game, const GameInput *input, float delta_time)
     }
 
     update_enemies(game, delta_time);
+    update_boss(game, delta_time);
     update_projectiles(game, delta_time);
     update_bombs(game, delta_time);
     update_pickups(game, input);
 
-    if (game_active_enemy_count(game) == 0) {
+    if (game_active_enemy_count(game) == 0 && !game->boss.active) {
         Room *room = floor_current_room(&game->floor);
         bool newly_cleared = !room->cleared;
         room->cleared = true;
@@ -781,6 +961,10 @@ void game_update(Game *game, const GameInput *input, float delta_time)
             if (game->inventory.has_active_item &&
                 game->inventory.active_charge < game->inventory.active_charge_maximum) {
                 ++game->inventory.active_charge;
+            }
+            if (room->type == ROOM_BOSS) {
+                game->victory = true;
+                ++game->completed_runs;
             }
         }
     }

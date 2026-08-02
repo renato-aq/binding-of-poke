@@ -15,6 +15,7 @@ enum {
     FLOOR_GRID_SIZE = 7,
     MAX_PICKUPS = 32,
     MAX_BOMBS = 8,
+    BOSS_SIZE = 72,
 };
 
 #define FIXED_TIMESTEP (1.0f / 60.0f)

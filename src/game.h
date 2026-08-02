@@ -21,6 +21,7 @@ typedef enum EntityKind {
     ENTITY_NONE,
     ENTITY_PLAYER,
     ENTITY_ENEMY,
+    ENTITY_BOSS,
 } EntityKind;
 
 typedef enum EnemyKind {
@@ -83,6 +84,7 @@ typedef struct Projectile {
     uint32_t collision_mask;
     int remaining_pierces;
     uint32_t hit_enemy_mask;
+    bool hit_boss;
     bool active;
 } Projectile;
 
@@ -114,6 +116,26 @@ typedef struct Bomb {
     bool active;
 } Bomb;
 
+typedef enum BossState {
+    BOSS_INTRO,
+    BOSS_AIMED_SPREAD,
+    BOSS_CHARGE_TELEGRAPH,
+    BOSS_CHARGING,
+    BOSS_SUMMON,
+} BossState;
+
+typedef struct Boss {
+    Vector2 position;
+    Vector2 charge_direction;
+    BossState state;
+    int health;
+    int maximum_health;
+    float state_timer;
+    uint16_t generation;
+    bool action_performed;
+    bool active;
+} Boss;
+
 typedef struct RunInventory {
     int coins;
     int keys;
@@ -134,12 +156,15 @@ typedef struct Game {
     Projectile projectiles[MAX_PROJECTILES];
     Pickup pickups[MAX_PICKUPS];
     Bomb placed_bombs[MAX_BOMBS];
+    Boss boss;
     RunInventory inventory;
     Floor floor;
     float shot_cooldown;
     uint32_t run_generation;
+    uint32_t completed_runs;
     bool paused;
     bool game_over;
+    bool victory;
 } Game;
 
 void game_init(Game *game);
@@ -149,6 +174,7 @@ bool game_enter_room(Game *game, int room_index);
 void game_handle_actions(Game *game, const GameInput *input);
 void game_update(Game *game, const GameInput *input, float delta_time);
 EntityHandle game_player_handle(const Game *game);
+EntityHandle game_boss_handle(const Game *game);
 EntityHandle game_spawn_enemy(Game *game, EnemyKind kind, Vector2 position);
 bool game_handle_is_valid(const Game *game, EntityHandle handle);
 bool game_apply_damage(Game *game, EntityHandle target, Faction source, int amount);

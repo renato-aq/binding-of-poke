@@ -49,6 +49,16 @@ Pokémon branding and characters with original content.
 - Bomb explosions that damage enemies and reveal secret rooms
 - Exact build statistics and nearby pickup descriptions in the window title
 
+### Milestone 5 — Boss and Complete Run: Complete
+
+- Dedicated Containment Guardian with spread, telegraphed charge, and summon states
+- Faster second phase with additional radial projectiles
+- Boss health bar, contact damage, and interaction with shots, bombs, and active items
+- Victory and game-over states with immediate restart
+- Successful runs advance to the next seed
+- Versioned, atomic save data for completed runs and the boss-defeated unlock
+- Persistent win count displayed alongside the current build
+
 ## Requirements
 
 - A C17 compiler

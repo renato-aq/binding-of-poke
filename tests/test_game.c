@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "game.h"
+#include "save.h"
 
 static void require_true(bool condition, const char *message)
 {
@@ -609,6 +610,107 @@ static void test_bomb_damage_and_secret_reveal(void)
                  "bomb explosion damages nearby enemies");
 }
 
+static void test_boss_state_machine(void)
+{
+    Game game;
+    game_init_with_seed(&game, 5150U);
+    int boss_room = find_room_type(&game.floor, ROOM_BOSS);
+    game_enter_room(&game, boss_room);
+    require_true(game.boss.active && game.boss.health == game.boss.maximum_health,
+                 "boss room creates a dedicated boss");
+    require_true(game_active_enemy_count(&game) == 0,
+                 "boss encounter starts without ordinary enemies");
+
+    game_update(&game, &(GameInput) { 0 }, 1.0f);
+    require_true(game.boss.state == BOSS_AIMED_SPREAD,
+                 "boss exits its introduction into aimed spread");
+    game.boss.state_timer = 0.3f;
+    game.boss.action_performed = false;
+    game_update(&game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(game_active_projectile_count(&game) >= 3,
+                 "aimed spread emits multiple hostile projectiles");
+
+    game.boss.state = BOSS_CHARGE_TELEGRAPH;
+    game.boss.state_timer = 0.0f;
+    game_update(&game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(game.boss.state == BOSS_CHARGING,
+                 "telegraphed attack advances to charge state");
+
+    clear_enemies(&game);
+    game.boss.state = BOSS_SUMMON;
+    game.boss.state_timer = 1.0f;
+    game.boss.action_performed = false;
+    game_update(&game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(game_active_enemy_count(&game) == 2,
+                 "summon pattern creates two chasers");
+    game_spawn_enemy(&game, ENEMY_CHASER, (Vector2) { 100.0f, 100.0f });
+    game_spawn_enemy(&game, ENEMY_CHASER, (Vector2) { 824.0f, 100.0f });
+    game.boss.state = BOSS_SUMMON;
+    game.boss.state_timer = 1.0f;
+    game.boss.action_performed = false;
+    game_update(&game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(game_active_enemy_count(&game) <= 4,
+                 "boss summons respect the encounter enemy cap");
+}
+
+static void test_boss_victory_and_next_run(void)
+{
+    Game game;
+    game_init_with_seed(&game, 8181U);
+    int boss_room = find_room_type(&game.floor, ROOM_BOSS);
+    game_enter_room(&game, boss_room);
+    EntityHandle boss = game_boss_handle(&game);
+    require_true(game_handle_is_valid(&game, boss), "live boss handle is valid");
+    game_apply_damage(&game, boss, FACTION_PLAYER, 999);
+    require_true(!game_handle_is_valid(&game, boss), "defeated boss handle is invalid");
+    game_update(&game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(game.victory && game.completed_runs == 1,
+                 "boss defeat completes and records the run");
+
+    game_handle_actions(&game, &(GameInput) { .restart = true });
+    require_true(!game.victory && game.floor.seed == 8182U && game.completed_runs == 1,
+                 "victory restart begins the next seed and preserves wins");
+}
+
+static void test_save_data_round_trip_and_version_rejection(void)
+{
+    const char *path = "/tmp/bind-of-poke-save-test.dat";
+    (void)remove(path);
+    SaveData data = {
+        .schema_version = SAVE_SCHEMA_VERSION,
+        .completed_runs = 7U,
+        .boss_defeated = true,
+    };
+    require_true(save_data_write(path, &data), "save data writes atomically");
+
+    SaveData loaded;
+    require_true(save_data_load(path, &loaded), "valid save data loads");
+    require_true(loaded.completed_runs == 7U && loaded.boss_defeated,
+                 "save round trip preserves unlock progress");
+
+    data.completed_runs = 8U;
+    require_true(save_data_write(path, &data), "atomic save replaces existing data");
+    require_true(save_data_load(path, &loaded) && loaded.completed_runs == 8U,
+                 "replacement save loads the new progress");
+
+    FILE *file = fopen(path, "w");
+    require_true(file != NULL, "test can create trailing-corruption save");
+    require_true(fputs("BOP_SAVE 1\ncompleted_runs 8\nboss_defeated 1\nCORRUPT", file) >= 0,
+                 "test writes trailing corruption");
+    require_true(fclose(file) == 0, "trailing-corruption save closes cleanly");
+    require_true(!save_data_load(path, &loaded), "trailing corruption is rejected");
+
+    file = fopen(path, "w");
+    require_true(file != NULL, "test can create unsupported save");
+    require_true(fputs("BOP_SAVE 999\ncompleted_runs 88\nboss_defeated 1\n", file) >= 0,
+                 "test writes unsupported version");
+    require_true(fclose(file) == 0, "unsupported save closes cleanly");
+    require_true(!save_data_load(path, &loaded), "unsupported schema is rejected");
+    require_true(loaded.completed_runs == 0U && !loaded.boss_defeated,
+                 "rejected save falls back to safe defaults");
+    (void)remove(path);
+}
+
 int main(void)
 {
     test_initial_combat_room();
@@ -632,6 +734,9 @@ int main(void)
     test_shop_and_keyed_reward();
     test_active_item_and_piercing_build();
     test_bomb_damage_and_secret_reveal();
+    test_boss_state_machine();
+    test_boss_victory_and_next_run();
+    test_save_data_round_trip_and_version_rejection();
     puts("All game tests passed.");
     return EXIT_SUCCESS;
 }
