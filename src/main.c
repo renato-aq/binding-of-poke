@@ -49,7 +49,11 @@ int main(int argument_count, char *arguments[])
         return 1;
     }
     game.completed_runs = save_data.completed_runs;
+    game.reduced_flashes = save_data.reduced_flashes;
     platform_set_seed_title(&platform, game.floor.seed);
+
+    InputSystem input_system;
+    input_init(&input_system);
 
     bool running = true;
     double accumulator = 0.0;
@@ -64,11 +68,18 @@ int main(int argument_count, char *arguments[])
         }
 
         AppInput input;
-        input_poll(&input, &platform, &game);
+        input_poll(&input_system, &input, &platform, &game);
         if (input.quit_requested) {
             running = false;
         }
+        bool reduced_flashes_before = game.reduced_flashes;
         game_handle_actions(&game, &input.game);
+        if (reduced_flashes_before != game.reduced_flashes) {
+            save_data.reduced_flashes = game.reduced_flashes;
+            if (!save_data_write("bind-of-poke.save", &save_data)) {
+                fprintf(stderr, "Could not save accessibility setting.\n");
+            }
+        }
 
         int update_count = 0;
         while (accumulator >= (double)FIXED_TIMESTEP &&
@@ -97,6 +108,7 @@ int main(int argument_count, char *arguments[])
         renderer_draw(platform.renderer, &game);
     }
 
+    input_shutdown(&input_system);
     platform_shutdown(&platform);
     return 0;
 }

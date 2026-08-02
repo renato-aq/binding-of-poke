@@ -336,11 +336,12 @@ bool game_enter_room(Game *game, int room_index)
 }
 
 static bool initialize_game(Game *game, uint32_t run_generation, uint32_t seed,
-                            uint32_t completed_runs)
+                            uint32_t completed_runs, bool reduced_flashes)
 {
     *game = (Game) { 0 };
     game->run_generation = run_generation == 0 ? 1 : run_generation;
     game->completed_runs = completed_runs;
+    game->reduced_flashes = reduced_flashes;
     game->player = (Player) {
         .position = { 460.0f, 440.0f },
         .health = 6,
@@ -363,12 +364,12 @@ static bool initialize_game(Game *game, uint32_t run_generation, uint32_t seed,
 
 void game_init(Game *game)
 {
-    (void)initialize_game(game, 1, 0xB10D2026U, 0U);
+    (void)initialize_game(game, 1, 0xB10D2026U, 0U, false);
 }
 
 bool game_init_with_seed(Game *game, uint32_t seed)
 {
-    return initialize_game(game, 1, seed, 0U);
+    return initialize_game(game, 1, seed, 0U, false);
 }
 
 void game_restart(Game *game)
@@ -379,10 +380,11 @@ void game_restart(Game *game)
     }
     uint32_t seed = game->floor.seed;
     uint32_t completed_runs = game->completed_runs;
+    bool reduced_flashes = game->reduced_flashes;
     if (game->victory) {
         ++seed;
     }
-    (void)initialize_game(game, next_generation, seed, completed_runs);
+    (void)initialize_game(game, next_generation, seed, completed_runs, reduced_flashes);
 }
 
 EntityHandle game_player_handle(const Game *game)
@@ -513,6 +515,9 @@ void game_handle_actions(Game *game, const GameInput *input)
     }
     if (!game->paused && !game->game_over && !game->victory && input->use_active_item) {
         use_active_item(game);
+    }
+    if (input->toggle_reduced_flashes) {
+        game->reduced_flashes = !game->reduced_flashes;
     }
 }
 

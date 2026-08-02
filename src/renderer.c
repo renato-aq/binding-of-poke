@@ -278,7 +278,7 @@ void renderer_draw(SDL_Renderer *renderer, const Game *game)
         SDL_RenderFillRect(renderer, &bar);
     }
 
-    bool player_visible = game->player.invulnerability <= 0.0f ||
+    bool player_visible = game->reduced_flashes || game->player.invulnerability <= 0.0f ||
                           ((int)(game->player.invulnerability * 16.0f) % 2 == 0);
     if (player_visible) {
         SDL_SetRenderDrawColor(renderer, 255, 236, 80, 255);

@@ -59,6 +59,15 @@ Pokémon branding and characters with original content.
 - Versioned, atomic save data for completed runs and the boss-defeated unlock
 - Persistent win count displayed alongside the current build
 
+### Milestone 6 — Stabilization: Complete
+
+- Keyboard, mouse, and hot-pluggable SDL2 gamepad support
+- Reduced-flash accessibility setting persisted with schema migration
+- Isolated release and debug build artifacts
+- AddressSanitizer and UndefinedBehaviorSanitizer verification
+- Ten-thousand-seed floor stress testing and repeated-run lifecycle testing
+- One-command full verification through `make check`
+
 ## Requirements
 
 - A C17 compiler
@@ -81,7 +90,7 @@ make run
 To replay a particular floor seed:
 
 ```sh
-./build/bind-of-poke 424242
+./build/release/bind-of-poke 424242
 ```
 
 Press Escape or close the window to exit.
@@ -95,7 +104,14 @@ Prototype controls:
 - Press E to buy or unlock a nearby reward.
 - Press B to place a bomb.
 - Press Space to use a fully charged active item.
+- Press F to toggle reduced flashes.
 - Press Escape to quit.
+
+Gamepad controls:
+
+- Move with the left stick and aim/shoot with the right stick.
+- Press A to interact, X to place a bomb, and Y to use the active item.
+- Press Start to pause and B to restart after a completed run.
 
 For a debug build:
 
@@ -107,4 +123,10 @@ Run the pure-C gameplay tests without opening a window:
 
 ```sh
 make test
+```
+
+Run every release, debug, sanitizer, and stress check:
+
+```sh
+make check
 ```

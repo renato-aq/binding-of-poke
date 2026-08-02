@@ -54,6 +54,7 @@ typedef struct GameInput {
     bool interact;
     bool place_bomb;
     bool use_active_item;
+    bool toggle_reduced_flashes;
 } GameInput;
 
 typedef struct Player {
@@ -165,6 +166,7 @@ typedef struct Game {
     bool paused;
     bool game_over;
     bool victory;
+    bool reduced_flashes;
 } Game;
 
 void game_init(Game *game);

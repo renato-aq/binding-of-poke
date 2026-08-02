@@ -4,12 +4,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum { SAVE_SCHEMA_VERSION = 1 };
+enum { SAVE_SCHEMA_VERSION = 2 };
 
 typedef struct SaveData {
     uint32_t schema_version;
     uint32_t completed_runs;
     bool boss_defeated;
+    bool reduced_flashes;
 } SaveData;
 
 void save_data_default(SaveData *data);

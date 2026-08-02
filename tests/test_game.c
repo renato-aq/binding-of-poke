@@ -326,6 +326,13 @@ static void test_pause_and_restart(void)
     game_handle_actions(&game, &(GameInput) { .restart = true });
     require_true(!game.game_over && game.player.health == game.player.maximum_health,
                  "restart creates a fresh combat room");
+
+    game_handle_actions(&game, &(GameInput) { .toggle_reduced_flashes = true });
+    require_true(game.reduced_flashes, "reduced-flash setting toggles on");
+    game.game_over = true;
+    game_handle_actions(&game, &(GameInput) { .restart = true });
+    require_true(game.reduced_flashes,
+                 "reduced-flash setting persists across run restarts");
 }
 
 static void test_wall_collision(void)
@@ -346,7 +353,12 @@ static void test_wall_collision(void)
 
 static void test_floor_generation_many_seeds(void)
 {
-    for (uint32_t seed = 1U; seed <= 256U; ++seed) {
+#ifdef STRESS_TESTS
+    const uint32_t maximum_seed = 10000U;
+#else
+    const uint32_t maximum_seed = 256U;
+#endif
+    for (uint32_t seed = 1U; seed <= maximum_seed; ++seed) {
         Floor floor;
         require_true(floor_generate(&floor, seed), "generated floor validates");
         require_true(floor_validate(&floor), "floor invariants remain valid");
@@ -385,6 +397,24 @@ static void test_floor_generation_many_seeds(void)
         require_true(reached[boss], "boss path never requires a hidden secret room");
     }
 }
+
+#ifdef STRESS_TESTS
+static void test_repeated_run_lifecycle(void)
+{
+    Game game;
+    game_init_with_seed(&game, 1U);
+    for (uint32_t run = 0U; run < 1000U; ++run) {
+        uint32_t previous_generation = game.run_generation;
+        game.game_over = true;
+        game_handle_actions(&game, &(GameInput) { .restart = true });
+        require_true(game.run_generation != previous_generation,
+                     "restart advances run generation");
+        require_true(floor_validate(&game.floor), "restarted run has a valid floor");
+        require_true(game_active_pickup_count(&game) == 0,
+                     "restart clears transient pickup instances");
+    }
+}
+#endif
 
 static void test_floor_seed_is_deterministic(void)
 {
@@ -680,12 +710,14 @@ static void test_save_data_round_trip_and_version_rejection(void)
         .schema_version = SAVE_SCHEMA_VERSION,
         .completed_runs = 7U,
         .boss_defeated = true,
+        .reduced_flashes = true,
     };
     require_true(save_data_write(path, &data), "save data writes atomically");
 
     SaveData loaded;
     require_true(save_data_load(path, &loaded), "valid save data loads");
-    require_true(loaded.completed_runs == 7U && loaded.boss_defeated,
+    require_true(loaded.completed_runs == 7U && loaded.boss_defeated &&
+                     loaded.reduced_flashes,
                  "save round trip preserves unlock progress");
 
     data.completed_runs = 8U;
@@ -699,6 +731,16 @@ static void test_save_data_round_trip_and_version_rejection(void)
                  "test writes trailing corruption");
     require_true(fclose(file) == 0, "trailing-corruption save closes cleanly");
     require_true(!save_data_load(path, &loaded), "trailing corruption is rejected");
+
+    file = fopen(path, "w");
+    require_true(file != NULL, "test can create legacy save");
+    require_true(fputs("BOP_SAVE 1\ncompleted_runs 3\nboss_defeated 1\n", file) >= 0,
+                 "test writes legacy schema");
+    require_true(fclose(file) == 0, "legacy save closes cleanly");
+    require_true(save_data_load(path, &loaded), "legacy schema migrates");
+    require_true(loaded.schema_version == SAVE_SCHEMA_VERSION &&
+                     loaded.completed_runs == 3U && !loaded.reduced_flashes,
+                 "legacy migration applies current defaults");
 
     file = fopen(path, "w");
     require_true(file != NULL, "test can create unsupported save");
@@ -737,6 +779,9 @@ int main(void)
     test_boss_state_machine();
     test_boss_victory_and_next_run();
     test_save_data_round_trip_and_version_rejection();
+#ifdef STRESS_TESTS
+    test_repeated_run_lifecycle();
+#endif
     puts("All game tests passed.");
     return EXIT_SUCCESS;
 }

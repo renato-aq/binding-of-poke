@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+#include <SDL.h>
+
 #include "game.h"
 #include "platform.h"
 
@@ -11,6 +13,17 @@ typedef struct AppInput {
     bool quit_requested;
 } AppInput;
 
-void input_poll(AppInput *input, const Platform *platform, const Game *game);
+typedef struct InputSystem {
+    SDL_GameController *controller;
+    SDL_JoystickID controller_id;
+    int dead_zone;
+    bool bomb_was_down;
+    bool active_was_down;
+} InputSystem;
+
+void input_init(InputSystem *system);
+void input_shutdown(InputSystem *system);
+void input_poll(InputSystem *system, AppInput *input,
+                const Platform *platform, const Game *game);
 
 #endif
