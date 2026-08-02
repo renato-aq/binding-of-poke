@@ -19,7 +19,7 @@ static void draw_health(SDL_Renderer *renderer, const Game *game)
 static void draw_doors(SDL_Renderer *renderer, bool open)
 {
     if (open) {
-        SDL_SetRenderDrawColor(renderer, 68, 150, 92, 255);
+        SDL_SetRenderDrawColor(renderer, 18, 20, 28, 255);
     } else {
         SDL_SetRenderDrawColor(renderer, 180, 62, 56, 255);
     }
@@ -32,6 +32,14 @@ static void draw_doors(SDL_Renderer *renderer, bool open)
     SDL_RenderFillRect(renderer, &bottom);
     SDL_RenderFillRect(renderer, &left);
     SDL_RenderFillRect(renderer, &right);
+
+    if (open) {
+        SDL_SetRenderDrawColor(renderer, 68, 190, 104, 255);
+        SDL_RenderDrawRect(renderer, &top);
+        SDL_RenderDrawRect(renderer, &bottom);
+        SDL_RenderDrawRect(renderer, &left);
+        SDL_RenderDrawRect(renderer, &right);
+    }
 }
 
 static void draw_overlay(SDL_Renderer *renderer, bool game_over)

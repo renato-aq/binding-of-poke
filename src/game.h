@@ -47,6 +47,7 @@ typedef struct EntityHandle {
     EntityKind kind;
     uint16_t index;
     uint16_t generation;
+    uint32_t run_generation;
 } EntityHandle;
 
 typedef struct GameInput {
@@ -100,11 +101,13 @@ typedef struct Game {
     Projectile projectiles[MAX_PROJECTILES];
     Room room;
     float shot_cooldown;
+    uint32_t run_generation;
     bool paused;
     bool game_over;
 } Game;
 
 void game_init(Game *game);
+void game_restart(Game *game);
 void game_handle_actions(Game *game, const GameInput *input);
 void game_update(Game *game, const GameInput *input, float delta_time);
 EntityHandle game_player_handle(const Game *game);

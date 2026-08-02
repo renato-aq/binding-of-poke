@@ -10,6 +10,7 @@ static const float ENEMY_PROJECTILE_SPEED = 250.0f;
 static const float PLAYER_SHOT_COOLDOWN = 0.16f;
 static const float SPITTER_SHOT_COOLDOWN = 1.35f;
 static const float PLAYER_INVULNERABILITY = 0.75f;
+static const float DOOR_HALF_WIDTH = 45.0f;
 
 static bool rectangles_overlap(Rectangle left, Rectangle right)
 {
@@ -48,9 +49,31 @@ static Rectangle projectile_bounds(const Projectile *projectile)
 
 static bool collides_with_world(const Game *game, Rectangle bounds)
 {
-    if (bounds.x < ROOM_INSET || bounds.y < ROOM_INSET ||
-        bounds.x + bounds.width > LOGICAL_WIDTH - ROOM_INSET ||
-        bounds.y + bounds.height > LOGICAL_HEIGHT - ROOM_INSET) {
+    if (bounds.x < 0.0f || bounds.y < 0.0f ||
+        bounds.x + bounds.width > LOGICAL_WIDTH ||
+        bounds.y + bounds.height > LOGICAL_HEIGHT) {
+        return true;
+    }
+
+    bool inside_horizontal_door =
+        bounds.x >= (float)LOGICAL_WIDTH / 2.0f - DOOR_HALF_WIDTH &&
+        bounds.x + bounds.width <= (float)LOGICAL_WIDTH / 2.0f + DOOR_HALF_WIDTH;
+    bool inside_vertical_door =
+        bounds.y >= (float)LOGICAL_HEIGHT / 2.0f - DOOR_HALF_WIDTH &&
+        bounds.y + bounds.height <= (float)LOGICAL_HEIGHT / 2.0f + DOOR_HALF_WIDTH;
+
+    if (bounds.x < ROOM_INSET && !(game->room.doors_open && inside_vertical_door)) {
+        return true;
+    }
+    if (bounds.x + bounds.width > LOGICAL_WIDTH - ROOM_INSET &&
+        !(game->room.doors_open && inside_vertical_door)) {
+        return true;
+    }
+    if (bounds.y < ROOM_INSET && !(game->room.doors_open && inside_horizontal_door)) {
+        return true;
+    }
+    if (bounds.y + bounds.height > LOGICAL_HEIGHT - ROOM_INSET &&
+        !(game->room.doors_open && inside_horizontal_door)) {
         return true;
     }
 
@@ -128,6 +151,23 @@ static void initialize_room(Game *game)
 
 EntityHandle game_spawn_enemy(Game *game, EnemyKind kind, Vector2 position)
 {
+    Rectangle spawn_bounds = { position.x, position.y, ENEMY_SIZE, ENEMY_SIZE };
+    if ((kind != ENEMY_CHASER && kind != ENEMY_SPITTER) ||
+        spawn_bounds.x < ROOM_INSET || spawn_bounds.y < ROOM_INSET ||
+        spawn_bounds.x + spawn_bounds.width > LOGICAL_WIDTH - ROOM_INSET ||
+        spawn_bounds.y + spawn_bounds.height > LOGICAL_HEIGHT - ROOM_INSET ||
+        collides_with_world(game, spawn_bounds) ||
+        rectangles_overlap(spawn_bounds, player_bounds(game))) {
+        return (EntityHandle) { 0 };
+    }
+
+    for (int index = 0; index < MAX_ENEMIES; ++index) {
+        if (game->enemies[index].active &&
+            rectangles_overlap(spawn_bounds, enemy_bounds(&game->enemies[index]))) {
+            return (EntityHandle) { 0 };
+        }
+    }
+
     for (uint16_t index = 0; index < MAX_ENEMIES; ++index) {
         Enemy *enemy = &game->enemies[index];
         if (!enemy->active) {
@@ -143,15 +183,18 @@ EntityHandle game_spawn_enemy(Game *game, EnemyKind kind, Vector2 position)
             enemy->collision_mask = COLLISION_WORLD | COLLISION_PLAYER |
                                     COLLISION_PLAYER_SHOT;
             enemy->active = true;
-            return (EntityHandle) { ENTITY_ENEMY, index, enemy->generation };
+            return (EntityHandle) {
+                ENTITY_ENEMY, index, enemy->generation, game->run_generation
+            };
         }
     }
     return (EntityHandle) { 0 };
 }
 
-void game_init(Game *game)
+static void initialize_game(Game *game, uint32_t run_generation)
 {
     *game = (Game) { 0 };
+    game->run_generation = run_generation == 0 ? 1 : run_generation;
     game->player = (Player) {
         .position = { 460.0f, 440.0f },
         .health = 6,
@@ -165,13 +208,32 @@ void game_init(Game *game)
     game_spawn_enemy(game, ENEMY_SPITTER, (Vector2) { 462.0f, 210.0f });
 }
 
+void game_init(Game *game)
+{
+    initialize_game(game, 1);
+}
+
+void game_restart(Game *game)
+{
+    uint32_t next_generation = game->run_generation + 1U;
+    if (next_generation == 0U) {
+        next_generation = 1U;
+    }
+    initialize_game(game, next_generation);
+}
+
 EntityHandle game_player_handle(const Game *game)
 {
-    return (EntityHandle) { ENTITY_PLAYER, 0, game->player.generation };
+    return (EntityHandle) {
+        ENTITY_PLAYER, 0, game->player.generation, game->run_generation
+    };
 }
 
 bool game_handle_is_valid(const Game *game, EntityHandle handle)
 {
+    if (handle.run_generation != game->run_generation) {
+        return false;
+    }
     if (handle.kind == ENTITY_PLAYER) {
         return handle.index == 0 && handle.generation == game->player.generation &&
                game->player.health > 0;
@@ -216,7 +278,7 @@ bool game_apply_damage(Game *game, EntityHandle target, Faction source, int amou
 void game_handle_actions(Game *game, const GameInput *input)
 {
     if (input->restart && game->game_over) {
-        game_init(game);
+        game_restart(game);
         return;
     }
     if (input->toggle_pause && !game->game_over) {
@@ -297,7 +359,9 @@ static void update_projectiles(Game *game, float delta_time)
                 (projectile->collision_mask & enemy->collision_layer) != 0U &&
                 (enemy->collision_mask & projectile->collision_layer) != 0U &&
                 rectangles_overlap(bounds, enemy_bounds(enemy))) {
-                EntityHandle handle = { ENTITY_ENEMY, enemy_index, enemy->generation };
+                EntityHandle handle = {
+                    ENTITY_ENEMY, enemy_index, enemy->generation, game->run_generation
+                };
                 game_apply_damage(game, handle, FACTION_PLAYER, projectile->damage);
                 projectile->active = false;
                 break;
