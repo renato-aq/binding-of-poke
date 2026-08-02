@@ -30,6 +30,15 @@ void input_poll(AppInput *input, const Platform *platform, const Game *game)
             if (event.key.keysym.sym == SDLK_r) {
                 input->game.restart = true;
             }
+            if (event.key.keysym.sym == SDLK_e) {
+                input->game.interact = true;
+            }
+            if (event.key.keysym.sym == SDLK_b) {
+                input->game.place_bomb = true;
+            }
+            if (event.key.keysym.sym == SDLK_SPACE) {
+                input->game.use_active_item = true;
+            }
         }
     }
 

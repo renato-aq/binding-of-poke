@@ -39,6 +39,16 @@ Pokémon branding and characters with original content.
 - Automatic reachability and door validation with a fallback layout
 - Generation regression coverage across more than 100 seeds
 
+### Milestone 4 — Run Economy and Builds: Complete
+
+- Persistent coins, keys, bombs, health, and room-clear rewards
+- Deterministic reward, shop, secret, and item pools
+- Purchasable shop offers and keyed reward choices
+- Damage, attack-rate, movement-speed, piercing, and health upgrades
+- Charged active item powered by room clears
+- Bomb explosions that damage enemies and reveal secret rooms
+- Exact build statistics and nearby pickup descriptions in the window title
+
 ## Requirements
 
 - A C17 compiler
@@ -72,6 +82,9 @@ Prototype controls:
 - Shoot with IJKL or hold the left mouse button and aim with the mouse.
 - Press P to pause or resume.
 - Press R after dying to restart the combat room.
+- Press E to buy or unlock a nearby reward.
+- Press B to place a bomb.
+- Press Space to use a fully charged active item.
 - Press Escape to quit.
 
 For a debug build:

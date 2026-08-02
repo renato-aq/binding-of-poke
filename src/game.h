@@ -50,6 +50,9 @@ typedef struct GameInput {
     bool shooting;
     bool toggle_pause;
     bool restart;
+    bool interact;
+    bool place_bomb;
+    bool use_active_item;
 } GameInput;
 
 typedef struct Player {
@@ -78,14 +81,60 @@ typedef struct Projectile {
     int damage;
     uint32_t collision_layer;
     uint32_t collision_mask;
+    int remaining_pierces;
+    uint32_t hit_enemy_mask;
     bool active;
 } Projectile;
+
+typedef enum PickupKind {
+    PICKUP_COIN,
+    PICKUP_KEY,
+    PICKUP_BOMB,
+    PICKUP_HEALTH,
+    PICKUP_DAMAGE_ITEM,
+    PICKUP_RATE_ITEM,
+    PICKUP_SPEED_ITEM,
+    PICKUP_PIERCE_ITEM,
+    PICKUP_HEALTH_ITEM,
+    PICKUP_ACTIVE_ITEM,
+} PickupKind;
+
+typedef struct Pickup {
+    Vector2 position;
+    PickupKind kind;
+    int price;
+    int room_slot;
+    bool requires_key;
+    bool active;
+} Pickup;
+
+typedef struct Bomb {
+    Vector2 position;
+    float fuse;
+    bool active;
+} Bomb;
+
+typedef struct RunInventory {
+    int coins;
+    int keys;
+    int bombs;
+    int damage_bonus;
+    int pierce_bonus;
+    int active_charge;
+    int active_charge_maximum;
+    float attack_rate_multiplier;
+    float speed_multiplier;
+    bool has_active_item;
+} RunInventory;
 
 typedef struct Game {
     Player player;
     Vector2 aim_direction;
     Enemy enemies[MAX_ENEMIES];
     Projectile projectiles[MAX_PROJECTILES];
+    Pickup pickups[MAX_PICKUPS];
+    Bomb placed_bombs[MAX_BOMBS];
+    RunInventory inventory;
     Floor floor;
     float shot_cooldown;
     uint32_t run_generation;
@@ -105,5 +154,6 @@ bool game_handle_is_valid(const Game *game, EntityHandle handle);
 bool game_apply_damage(Game *game, EntityHandle target, Faction source, int amount);
 int game_active_projectile_count(const Game *game);
 int game_active_enemy_count(const Game *game);
+int game_active_pickup_count(const Game *game);
 
 #endif

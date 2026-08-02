@@ -33,6 +33,7 @@ static void place_projectile(Projectile *projectile, Vector2 position,
         .damage = 1,
         .collision_layer = layer,
         .collision_mask = mask,
+        .hit_enemy_mask = 0U,
         .active = true,
     };
 }
@@ -175,10 +176,39 @@ static void test_open_doors_are_traversable(void)
 
     Game open;
     game_init(&open);
-    floor_current_room(&open.floor)->door_mask |= DOOR_LEFT;
-    open.player.position = locked.player.position;
-    game_update(&open, &(GameInput) { .move_direction = { -1.0f, 0.0f } }, 0.05f);
-    require_true(open.player.position.x < ROOM_INSET,
+    const Room *start = floor_current_room_const(&open.floor);
+    Direction connected = DIRECTION_COUNT;
+    for (int direction = 0; direction < DIRECTION_COUNT; ++direction) {
+        if ((start->door_mask & (1U << (unsigned int)direction)) != 0U &&
+            floor_connection_revealed(&open.floor, open.floor.current_room,
+                                      (Direction)direction)) {
+            connected = (Direction)direction;
+            break;
+        }
+    }
+    require_true(connected != DIRECTION_COUNT, "start has a revealed exit");
+    GameInput exit_input = { 0 };
+    if (connected == DIRECTION_LEFT) {
+        open.player.position = (Vector2) { ROOM_INSET, 250.0f };
+        exit_input.move_direction.x = -1.0f;
+    } else if (connected == DIRECTION_RIGHT) {
+        open.player.position = (Vector2) {
+            LOGICAL_WIDTH - ROOM_INSET - PLAYER_SIZE, 250.0f
+        };
+        exit_input.move_direction.x = 1.0f;
+    } else if (connected == DIRECTION_UP) {
+        open.player.position = (Vector2) { 460.0f, ROOM_INSET };
+        exit_input.move_direction.y = -1.0f;
+    } else {
+        open.player.position = (Vector2) {
+            460.0f, LOGICAL_HEIGHT - ROOM_INSET - PLAYER_SIZE
+        };
+        exit_input.move_direction.y = 1.0f;
+    }
+    Vector2 before = open.player.position;
+    game_update(&open, &exit_input, 0.05f);
+    require_true(!nearly_equal(open.player.position.x, before.x) ||
+                     !nearly_equal(open.player.position.y, before.y),
                  "open door permits movement into the exit corridor");
 }
 
@@ -331,6 +361,27 @@ static void test_floor_generation_many_seeds(void)
             require_true(boss_distance >= distance,
                          "boss occupies a farthest room from the start");
         }
+
+        bool reached[MAX_FLOOR_ROOMS] = { false };
+        int queue[MAX_FLOOR_ROOMS];
+        int head = 0;
+        int tail = 0;
+        reached[0] = true;
+        queue[tail++] = 0;
+        while (head < tail) {
+            int room_index = queue[head++];
+            for (int direction = 0; direction < DIRECTION_COUNT; ++direction) {
+                int neighbor = floor_neighbor(&floor, room_index, (Direction)direction);
+                if (neighbor < 0 || reached[neighbor] ||
+                    (floor.rooms[neighbor].type == ROOM_SECRET &&
+                     !floor.rooms[neighbor].revealed)) {
+                    continue;
+                }
+                reached[neighbor] = true;
+                queue[tail++] = neighbor;
+            }
+        }
+        require_true(reached[boss], "boss path never requires a hidden secret room");
     }
 }
 
@@ -411,6 +462,153 @@ static void test_room_transition_and_persistence(void)
                  "cleared room stays cleared after revisiting");
 }
 
+static void test_clear_rewards_persist(void)
+{
+    Game game;
+    game_init_with_seed(&game, 9001U);
+    enter_combat_room(&game);
+    int combat_index = game.floor.current_room;
+    clear_enemies(&game);
+    game_update(&game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(game_active_pickup_count(&game) == 1,
+                 "first combat clear creates one resource reward");
+    PickupKind reward_kind = game.pickups[0].kind;
+
+    game_enter_room(&game, 0);
+    game_enter_room(&game, combat_index);
+    require_true(game_active_enemy_count(&game) == 0,
+                 "cleared encounter stays empty");
+    require_true(game_active_pickup_count(&game) == 1 &&
+                     game.pickups[0].kind == reward_kind,
+                 "uncollected clear reward persists across rooms");
+}
+
+static void test_resource_and_item_collection(void)
+{
+    Game game;
+    game_init(&game);
+    game.pickups[0] = (Pickup) {
+        .position = game.player.position,
+        .kind = PICKUP_COIN,
+        .room_slot = -1,
+        .active = true,
+    };
+    game_update(&game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(game.inventory.coins == 3, "coin pickup increases currency");
+
+    game.pickups[0] = (Pickup) {
+        .position = game.player.position,
+        .kind = PICKUP_DAMAGE_ITEM,
+        .room_slot = -1,
+        .active = true,
+    };
+    game_update(&game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(game.inventory.damage_bonus == 1,
+                 "passive item updates the player build");
+}
+
+static void test_shop_and_keyed_reward(void)
+{
+    Game shop_game;
+    game_init(&shop_game);
+    int shop = find_room_type(&shop_game.floor, ROOM_SHOP);
+    game_enter_room(&shop_game, shop);
+    require_true(game_active_pickup_count(&shop_game) == 2,
+                 "shop creates two deterministic offers");
+    shop_game.inventory.coins = 10;
+    shop_game.player.position = shop_game.pickups[0].position;
+    game_update(&shop_game, &(GameInput) { 0 }, FIXED_TIMESTEP);
+    require_true(shop_game.pickups[0].active, "shop item waits for interaction");
+    int price = shop_game.pickups[0].price;
+    game_update(&shop_game, &(GameInput) { .interact = true }, FIXED_TIMESTEP);
+    require_true(!shop_game.pickups[0].active &&
+                     shop_game.inventory.coins == 10 - price,
+                 "shop purchase consumes its displayed price");
+
+    Game reward_game;
+    game_init(&reward_game);
+    int reward = find_room_type(&reward_game.floor, ROOM_REWARD);
+    game_enter_room(&reward_game, reward);
+    reward_game.player.position = reward_game.pickups[0].position;
+    game_update(&reward_game, &(GameInput) { .interact = true }, FIXED_TIMESTEP);
+    require_true(reward_game.pickups[0].active,
+                 "reward pedestal remains locked without a key");
+    reward_game.inventory.keys = 1;
+    game_update(&reward_game, &(GameInput) { .interact = true }, FIXED_TIMESTEP);
+    require_true(game_active_pickup_count(&reward_game) == 0 &&
+                     reward_game.inventory.keys == 0,
+                 "key opens one reward choice and removes the alternative");
+}
+
+static void test_active_item_and_piercing_build(void)
+{
+    Game game;
+    game_init(&game);
+    enter_combat_room(&game);
+    int health_before = game.enemies[0].health;
+    game.inventory.has_active_item = true;
+    game.inventory.active_charge = game.inventory.active_charge_maximum;
+    game_handle_actions(&game, &(GameInput) { .use_active_item = true });
+    require_true(game.inventory.active_charge == 0 &&
+                     game.enemies[0].health == health_before - 2,
+                 "charged active item damages the room and consumes charge");
+
+    Game projectile_game;
+    game_init(&projectile_game);
+    projectile_game.inventory.pierce_bonus = 1;
+    game_update(&projectile_game,
+                &(GameInput) { .aim_direction = { 1.0f, 0.0f }, .shooting = true },
+                FIXED_TIMESTEP);
+    require_true(projectile_game.projectiles[0].active &&
+                     projectile_game.projectiles[0].remaining_pierces == 1,
+                 "piercing upgrade is copied into new projectiles");
+}
+
+static void test_bomb_damage_and_secret_reveal(void)
+{
+    Game game;
+    game_init_with_seed(&game, 1212U);
+    int secret = find_room_type(&game.floor, ROOM_SECRET);
+    int adjacent = -1;
+    Direction toward_secret = DIRECTION_COUNT;
+    for (int room_index = 0; room_index < game.floor.room_count; ++room_index) {
+        for (int direction = 0; direction < DIRECTION_COUNT; ++direction) {
+            if (floor_neighbor(&game.floor, room_index, (Direction)direction) == secret) {
+                adjacent = room_index;
+                toward_secret = (Direction)direction;
+            }
+        }
+    }
+    require_true(adjacent >= 0, "secret room has an adjacent placement room");
+    game_enter_room(&game, adjacent);
+    clear_enemies(&game);
+    if (toward_secret == DIRECTION_LEFT) {
+        game.player.position = (Vector2) { ROOM_INSET, 250.0f };
+    } else if (toward_secret == DIRECTION_RIGHT) {
+        game.player.position = (Vector2) { LOGICAL_WIDTH - ROOM_INSET, 250.0f };
+    } else if (toward_secret == DIRECTION_UP) {
+        game.player.position = (Vector2) { 460.0f, ROOM_INSET };
+    } else {
+        game.player.position = (Vector2) { 460.0f, LOGICAL_HEIGHT - ROOM_INSET };
+    }
+    game_handle_actions(&game, &(GameInput) { .place_bomb = true });
+    game_update(&game, &(GameInput) { 0 }, 1.0f);
+    require_true(game.floor.rooms[secret].revealed,
+                 "bomb beside a hidden connection reveals the secret room");
+    require_true(game.inventory.bombs == 1, "placing a bomb consumes inventory");
+
+    Game damage_game;
+    game_init(&damage_game);
+    enter_combat_room(&damage_game);
+    damage_game.player.position = damage_game.enemies[0].position;
+    int health = damage_game.enemies[0].health;
+    game_handle_actions(&damage_game, &(GameInput) { .place_bomb = true });
+    game_update(&damage_game, &(GameInput) { 0 }, 1.0f);
+    require_true(!damage_game.enemies[0].active ||
+                     damage_game.enemies[0].health <= health - 2,
+                 "bomb explosion damages nearby enemies");
+}
+
 int main(void)
 {
     test_initial_combat_room();
@@ -429,6 +627,11 @@ int main(void)
     test_floor_generation_many_seeds();
     test_floor_seed_is_deterministic();
     test_room_transition_and_persistence();
+    test_clear_rewards_persist();
+    test_resource_and_item_collection();
+    test_shop_and_keyed_reward();
+    test_active_item_and_piercing_build();
+    test_bomb_damage_and_secret_reveal();
     puts("All game tests passed.");
     return EXIT_SUCCESS;
 }

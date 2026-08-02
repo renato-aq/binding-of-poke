@@ -48,6 +48,11 @@ typedef struct Room {
     bool doors_open;
     bool cleared;
     bool visited;
+    bool revealed;
+    bool rewards_spawned;
+    int reward_kinds[2];
+    int reward_prices[2];
+    bool reward_available[2];
 } Room;
 
 typedef struct Floor {
@@ -63,5 +68,6 @@ int floor_find_room(const Floor *floor, int grid_x, int grid_y);
 int floor_neighbor(const Floor *floor, int room_index, Direction direction);
 Room *floor_current_room(Floor *floor);
 const Room *floor_current_room_const(const Floor *floor);
+bool floor_connection_revealed(const Floor *floor, int room_index, Direction direction);
 
 #endif

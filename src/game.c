@@ -11,6 +11,8 @@ static const float PLAYER_SHOT_COOLDOWN = 0.16f;
 static const float SPITTER_SHOT_COOLDOWN = 1.35f;
 static const float PLAYER_INVULNERABILITY = 0.75f;
 static const float DOOR_HALF_WIDTH = 45.0f;
+static const float BOMB_FUSE = 0.8f;
+static const float BOMB_RADIUS = 105.0f;
 
 static bool rectangles_overlap(Rectangle left, Rectangle right)
 {
@@ -64,19 +66,27 @@ static bool collides_with_world(const Game *game, Rectangle bounds)
         bounds.y + bounds.height <= (float)LOGICAL_HEIGHT / 2.0f + DOOR_HALF_WIDTH;
 
     if (bounds.x < ROOM_INSET &&
-        !(room->doors_open && (room->door_mask & DOOR_LEFT) != 0U && inside_vertical_door)) {
+        !(room->doors_open &&
+          floor_connection_revealed(&game->floor, game->floor.current_room, DIRECTION_LEFT) &&
+          inside_vertical_door)) {
         return true;
     }
     if (bounds.x + bounds.width > LOGICAL_WIDTH - ROOM_INSET &&
-        !(room->doors_open && (room->door_mask & DOOR_RIGHT) != 0U && inside_vertical_door)) {
+        !(room->doors_open &&
+          floor_connection_revealed(&game->floor, game->floor.current_room, DIRECTION_RIGHT) &&
+          inside_vertical_door)) {
         return true;
     }
     if (bounds.y < ROOM_INSET &&
-        !(room->doors_open && (room->door_mask & DOOR_UP) != 0U && inside_horizontal_door)) {
+        !(room->doors_open &&
+          floor_connection_revealed(&game->floor, game->floor.current_room, DIRECTION_UP) &&
+          inside_horizontal_door)) {
         return true;
     }
     if (bounds.y + bounds.height > LOGICAL_HEIGHT - ROOM_INSET &&
-        !(room->doors_open && (room->door_mask & DOOR_DOWN) != 0U && inside_horizontal_door)) {
+        !(room->doors_open &&
+          floor_connection_revealed(&game->floor, game->floor.current_room, DIRECTION_DOWN) &&
+          inside_horizontal_door)) {
         return true;
     }
 
@@ -124,6 +134,9 @@ static void spawn_projectile(Game *game, Vector2 center, Vector2 direction,
             projectile->collision_mask = faction == FACTION_PLAYER
                                               ? COLLISION_WORLD | COLLISION_ENEMY
                                               : COLLISION_WORLD | COLLISION_PLAYER;
+            projectile->remaining_pierces =
+                faction == FACTION_PLAYER ? game->inventory.pierce_bonus : 0;
+            projectile->hit_enemy_mask = 0U;
             projectile->active = true;
             return;
         }
@@ -137,7 +150,7 @@ static void fire_player_projectile(Game *game)
         game->player.position.y + (float)PLAYER_SIZE / 2.0f,
     };
     spawn_projectile(game, center, game->aim_direction, PLAYER_PROJECTILE_SPEED,
-                     FACTION_PLAYER, 1);
+                     FACTION_PLAYER, 1 + game->inventory.damage_bonus);
 }
 
 EntityHandle game_spawn_enemy(Game *game, EnemyKind kind, Vector2 position)
@@ -182,6 +195,76 @@ EntityHandle game_spawn_enemy(Game *game, EnemyKind kind, Vector2 position)
     return (EntityHandle) { 0 };
 }
 
+static PickupKind deterministic_item(const Game *game, int salt)
+{
+    uint32_t value = game->floor.seed ^
+                     ((uint32_t)(game->floor.current_room + 1) * 0x9e3779b9U) ^
+                     ((uint32_t)(salt + 1) * 0x85ebca6bU);
+    value ^= value >> 16U;
+    return (PickupKind)(PICKUP_DAMAGE_ITEM + value % 6U);
+}
+
+static void prepare_room_rewards(Game *game, Room *room)
+{
+    if (room->rewards_spawned) {
+        return;
+    }
+    if (room->type != ROOM_REWARD && room->type != ROOM_SHOP &&
+        room->type != ROOM_SECRET) {
+        return;
+    }
+    room->rewards_spawned = true;
+
+    if (room->type == ROOM_REWARD) {
+        room->reward_kinds[0] = deterministic_item(game, 0);
+        room->reward_kinds[1] = deterministic_item(game, 1);
+        room->reward_available[0] = true;
+        room->reward_available[1] = true;
+    } else if (room->type == ROOM_SHOP) {
+        room->reward_kinds[0] = deterministic_item(game, 2);
+        room->reward_kinds[1] = deterministic_item(game, 3);
+        room->reward_prices[0] = 5;
+        room->reward_prices[1] = 7;
+        room->reward_available[0] = true;
+        room->reward_available[1] = true;
+    } else if (room->type == ROOM_SECRET) {
+        room->reward_kinds[0] = PICKUP_ACTIVE_ITEM;
+        room->reward_available[0] = true;
+    }
+}
+
+static void spawn_room_pickups(Game *game, const Room *room)
+{
+    static const Vector2 positions[2] = {
+        { 430.0f, 250.0f }, { 506.0f, 250.0f }
+    };
+    for (int slot = 0; slot < 2; ++slot) {
+        if (!room->reward_available[slot]) {
+            continue;
+        }
+        game->pickups[slot] = (Pickup) {
+            .position = positions[slot],
+            .kind = (PickupKind)room->reward_kinds[slot],
+            .price = room->reward_prices[slot],
+            .room_slot = slot,
+            .requires_key = room->type == ROOM_REWARD,
+            .active = true,
+        };
+    }
+}
+
+static void create_clear_reward(Game *game, Room *room)
+{
+    if (room->rewards_spawned || room->type == ROOM_START) {
+        return;
+    }
+    room->rewards_spawned = true;
+    uint32_t value = game->floor.seed + (uint32_t)game->floor.current_room * 17U;
+    room->reward_kinds[0] = (int)(value % 4U);
+    room->reward_available[0] = true;
+    spawn_room_pickups(game, room);
+}
+
 static void clear_room_entities(Game *game)
 {
     for (int index = 0; index < MAX_ENEMIES; ++index) {
@@ -190,6 +273,12 @@ static void clear_room_entities(Game *game)
     for (int index = 0; index < MAX_PROJECTILES; ++index) {
         game->projectiles[index].active = false;
     }
+    for (int index = 0; index < MAX_PICKUPS; ++index) {
+        game->pickups[index].active = false;
+    }
+    for (int index = 0; index < MAX_BOMBS; ++index) {
+        game->placed_bombs[index].active = false;
+    }
 }
 
 static void load_current_room(Game *game)
@@ -197,6 +286,8 @@ static void load_current_room(Game *game)
     clear_room_entities(game);
     Room *room = floor_current_room(&game->floor);
     room->visited = true;
+    prepare_room_rewards(game, room);
+    spawn_room_pickups(game, room);
 
     if (room->cleared) {
         room->doors_open = true;
@@ -231,6 +322,12 @@ static bool initialize_game(Game *game, uint32_t run_generation, uint32_t seed)
         .health = 6,
         .maximum_health = 6,
         .generation = 1,
+    };
+    game->inventory = (RunInventory) {
+        .bombs = 2,
+        .attack_rate_multiplier = 1.0f,
+        .speed_multiplier = 1.0f,
+        .active_charge_maximum = 3,
     };
     game->aim_direction = (Vector2) { 0.0f, -1.0f };
     if (!floor_generate(&game->floor, seed)) {
@@ -313,6 +410,44 @@ bool game_apply_damage(Game *game, EntityHandle target, Faction source, int amou
     return true;
 }
 
+static void place_bomb(Game *game)
+{
+    if (game->inventory.bombs <= 0) {
+        return;
+    }
+    for (int index = 0; index < MAX_BOMBS; ++index) {
+        Bomb *bomb = &game->placed_bombs[index];
+        if (!bomb->active) {
+            bomb->position = (Vector2) {
+                game->player.position.x + (float)PLAYER_SIZE / 2.0f,
+                game->player.position.y + (float)PLAYER_SIZE / 2.0f,
+            };
+            bomb->fuse = BOMB_FUSE;
+            bomb->active = true;
+            --game->inventory.bombs;
+            return;
+        }
+    }
+}
+
+static void use_active_item(Game *game)
+{
+    if (!game->inventory.has_active_item ||
+        game->inventory.active_charge < game->inventory.active_charge_maximum) {
+        return;
+    }
+    game->inventory.active_charge = 0;
+    for (uint16_t index = 0; index < MAX_ENEMIES; ++index) {
+        Enemy *enemy = &game->enemies[index];
+        if (enemy->active) {
+            EntityHandle handle = {
+                ENTITY_ENEMY, index, enemy->generation, game->run_generation
+            };
+            game_apply_damage(game, handle, FACTION_PLAYER, 2);
+        }
+    }
+}
+
 void game_handle_actions(Game *game, const GameInput *input)
 {
     if (input->restart && game->game_over) {
@@ -321,6 +456,12 @@ void game_handle_actions(Game *game, const GameInput *input)
     }
     if (input->toggle_pause && !game->game_over) {
         game->paused = !game->paused;
+    }
+    if (!game->paused && !game->game_over && input->place_bomb) {
+        place_bomb(game);
+    }
+    if (!game->paused && !game->game_over && input->use_active_item) {
+        use_active_item(game);
     }
 }
 
@@ -393,7 +534,8 @@ static void update_projectiles(Game *game, float delta_time)
 
         for (uint16_t enemy_index = 0; enemy_index < MAX_ENEMIES; ++enemy_index) {
             Enemy *enemy = &game->enemies[enemy_index];
-            if (enemy->active &&
+            uint32_t enemy_bit = 1U << enemy_index;
+            if (enemy->active && (projectile->hit_enemy_mask & enemy_bit) == 0U &&
                 (projectile->collision_mask & enemy->collision_layer) != 0U &&
                 (enemy->collision_mask & projectile->collision_layer) != 0U &&
                 rectangles_overlap(bounds, enemy_bounds(enemy))) {
@@ -401,7 +543,12 @@ static void update_projectiles(Game *game, float delta_time)
                     ENTITY_ENEMY, enemy_index, enemy->generation, game->run_generation
                 };
                 game_apply_damage(game, handle, FACTION_PLAYER, projectile->damage);
-                projectile->active = false;
+                projectile->hit_enemy_mask |= enemy_bit;
+                if (projectile->remaining_pierces > 0) {
+                    --projectile->remaining_pierces;
+                } else {
+                    projectile->active = false;
+                }
                 break;
             }
         }
@@ -411,6 +558,139 @@ static void update_projectiles(Game *game, float delta_time)
 static bool direction_available(const Room *room, Direction direction)
 {
     return (room->door_mask & (1U << (unsigned int)direction)) != 0U;
+}
+
+static void apply_pickup(Game *game, PickupKind kind)
+{
+    switch (kind) {
+        case PICKUP_COIN: game->inventory.coins += 3; break;
+        case PICKUP_KEY: ++game->inventory.keys; break;
+        case PICKUP_BOMB: ++game->inventory.bombs; break;
+        case PICKUP_HEALTH:
+            if (game->player.health < game->player.maximum_health) {
+                ++game->player.health;
+            }
+            break;
+        case PICKUP_DAMAGE_ITEM: ++game->inventory.damage_bonus; break;
+        case PICKUP_RATE_ITEM:
+            game->inventory.attack_rate_multiplier *= 0.82f;
+            if (game->inventory.attack_rate_multiplier < 0.35f) {
+                game->inventory.attack_rate_multiplier = 0.35f;
+            }
+            break;
+        case PICKUP_SPEED_ITEM:
+            game->inventory.speed_multiplier += 0.12f;
+            if (game->inventory.speed_multiplier > 1.8f) {
+                game->inventory.speed_multiplier = 1.8f;
+            }
+            break;
+        case PICKUP_PIERCE_ITEM: ++game->inventory.pierce_bonus; break;
+        case PICKUP_HEALTH_ITEM:
+            ++game->player.maximum_health;
+            ++game->player.health;
+            break;
+        case PICKUP_ACTIVE_ITEM:
+            game->inventory.has_active_item = true;
+            game->inventory.active_charge = game->inventory.active_charge_maximum;
+            break;
+    }
+}
+
+static void update_pickups(Game *game, const GameInput *input)
+{
+    Rectangle player = player_bounds(game);
+    Room *room = floor_current_room(&game->floor);
+    for (int index = 0; index < MAX_PICKUPS; ++index) {
+        Pickup *pickup = &game->pickups[index];
+        if (!pickup->active) {
+            continue;
+        }
+        Rectangle bounds = { pickup->position.x, pickup->position.y, 24.0f, 24.0f };
+        if (!rectangles_overlap(player, bounds)) {
+            continue;
+        }
+        if (pickup->kind == PICKUP_HEALTH &&
+            game->player.health >= game->player.maximum_health) {
+            continue;
+        }
+        if (pickup->price > 0) {
+            if (!input->interact || game->inventory.coins < pickup->price) {
+                continue;
+            }
+            game->inventory.coins -= pickup->price;
+        }
+        if (pickup->requires_key) {
+            if (!input->interact || game->inventory.keys <= 0) {
+                continue;
+            }
+            --game->inventory.keys;
+        }
+
+        apply_pickup(game, pickup->kind);
+        pickup->active = false;
+        if (pickup->room_slot >= 0 && pickup->room_slot < 2) {
+            room->reward_available[pickup->room_slot] = false;
+        }
+        if (room->type == ROOM_REWARD && pickup->kind >= PICKUP_DAMAGE_ITEM) {
+            room->reward_available[0] = false;
+            room->reward_available[1] = false;
+            for (int other = 0; other < MAX_PICKUPS; ++other) {
+                game->pickups[other].active = false;
+            }
+        }
+    }
+}
+
+static void reveal_secret_from_bomb(Game *game, Vector2 center)
+{
+    static const Vector2 door_centers[DIRECTION_COUNT] = {
+        { LOGICAL_WIDTH / 2.0f, ROOM_INSET },
+        { LOGICAL_WIDTH - ROOM_INSET, LOGICAL_HEIGHT / 2.0f },
+        { LOGICAL_WIDTH / 2.0f, LOGICAL_HEIGHT - ROOM_INSET },
+        { ROOM_INSET, LOGICAL_HEIGHT / 2.0f },
+    };
+    for (int direction = 0; direction < DIRECTION_COUNT; ++direction) {
+        int neighbor = floor_neighbor(&game->floor, game->floor.current_room,
+                                      (Direction)direction);
+        if (neighbor < 0 || game->floor.rooms[neighbor].type != ROOM_SECRET) {
+            continue;
+        }
+        float dx = center.x - door_centers[direction].x;
+        float dy = center.y - door_centers[direction].y;
+        if (dx * dx + dy * dy <= BOMB_RADIUS * BOMB_RADIUS) {
+            game->floor.rooms[neighbor].revealed = true;
+        }
+    }
+}
+
+static void update_bombs(Game *game, float delta_time)
+{
+    for (int index = 0; index < MAX_BOMBS; ++index) {
+        Bomb *bomb = &game->placed_bombs[index];
+        if (!bomb->active) {
+            continue;
+        }
+        bomb->fuse -= delta_time;
+        if (bomb->fuse > 0.0f) {
+            continue;
+        }
+        bomb->active = false;
+        reveal_secret_from_bomb(game, bomb->position);
+        for (uint16_t enemy_index = 0; enemy_index < MAX_ENEMIES; ++enemy_index) {
+            Enemy *enemy = &game->enemies[enemy_index];
+            if (!enemy->active) {
+                continue;
+            }
+            float dx = bomb->position.x - (enemy->position.x + ENEMY_SIZE / 2.0f);
+            float dy = bomb->position.y - (enemy->position.y + ENEMY_SIZE / 2.0f);
+            if (dx * dx + dy * dy <= BOMB_RADIUS * BOMB_RADIUS) {
+                EntityHandle handle = {
+                    ENTITY_ENEMY, enemy_index, enemy->generation, game->run_generation
+                };
+                game_apply_damage(game, handle, FACTION_PLAYER, 2);
+            }
+        }
+    }
 }
 
 static bool try_room_transition(Game *game, Vector2 movement, float delta_time)
@@ -433,7 +713,8 @@ static bool try_room_transition(Game *game, Vector2 movement, float delta_time)
         direction = DIRECTION_DOWN;
     }
 
-    if (direction == DIRECTION_COUNT || !direction_available(room, direction)) {
+    if (direction == DIRECTION_COUNT || !direction_available(room, direction) ||
+        !floor_connection_revealed(&game->floor, game->floor.current_room, direction)) {
         return false;
     }
     int neighbor = floor_neighbor(&game->floor, game->floor.current_room, direction);
@@ -465,8 +746,8 @@ void game_update(Game *game, const GameInput *input, float delta_time)
         game->aim_direction = input->aim_direction;
     }
     Vector2 player_velocity = {
-        input->move_direction.x * PLAYER_SPEED,
-        input->move_direction.y * PLAYER_SPEED,
+        input->move_direction.x * PLAYER_SPEED * game->inventory.speed_multiplier,
+        input->move_direction.y * PLAYER_SPEED * game->inventory.speed_multiplier,
     };
     if (!try_room_transition(game, input->move_direction, delta_time)) {
         move_with_world_collision(game, &game->player.position, PLAYER_SIZE,
@@ -481,16 +762,27 @@ void game_update(Game *game, const GameInput *input, float delta_time)
     }
     if (input->shooting && game->shot_cooldown <= 0.0f) {
         fire_player_projectile(game);
-        game->shot_cooldown = PLAYER_SHOT_COOLDOWN;
+        game->shot_cooldown = PLAYER_SHOT_COOLDOWN *
+                              game->inventory.attack_rate_multiplier;
     }
 
     update_enemies(game, delta_time);
     update_projectiles(game, delta_time);
+    update_bombs(game, delta_time);
+    update_pickups(game, input);
 
     if (game_active_enemy_count(game) == 0) {
         Room *room = floor_current_room(&game->floor);
+        bool newly_cleared = !room->cleared;
         room->cleared = true;
         room->doors_open = true;
+        if (newly_cleared) {
+            create_clear_reward(game, room);
+            if (game->inventory.has_active_item &&
+                game->inventory.active_charge < game->inventory.active_charge_maximum) {
+                ++game->inventory.active_charge;
+            }
+        }
     }
 }
 
@@ -510,6 +802,17 @@ int game_active_enemy_count(const Game *game)
     int count = 0;
     for (int index = 0; index < MAX_ENEMIES; ++index) {
         if (game->enemies[index].active) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int game_active_pickup_count(const Game *game)
+{
+    int count = 0;
+    for (int index = 0; index < MAX_PICKUPS; ++index) {
+        if (game->pickups[index].active) {
             ++count;
         }
     }

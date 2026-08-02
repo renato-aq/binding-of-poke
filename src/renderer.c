@@ -1,6 +1,70 @@
 #include "renderer.h"
 
+#include <stdio.h>
+
 #include "config.h"
+
+static const char *pickup_description(PickupKind kind)
+{
+    switch (kind) {
+        case PICKUP_COIN: return "Coin cache: +3 coins";
+        case PICKUP_KEY: return "Key: opens one reward choice";
+        case PICKUP_BOMB: return "Bomb: damage enemies and reveal secrets";
+        case PICKUP_HEALTH: return "Berry: restore 1 HP";
+        case PICKUP_DAMAGE_ITEM: return "Power Band: +1 projectile damage";
+        case PICKUP_RATE_ITEM: return "Quick Claw: 18% faster attacks";
+        case PICKUP_SPEED_ITEM: return "Swift Feather: +12% movement speed";
+        case PICKUP_PIERCE_ITEM: return "Piercing Charge: +1 enemy pierced";
+        case PICKUP_HEALTH_ITEM: return "Oran Pack: +1 maximum HP and heal 1";
+        case PICKUP_ACTIVE_ITEM: return "Emergency Battery: shock room for 2 damage";
+    }
+    return "Unknown pickup";
+}
+
+static void update_window_title(SDL_Renderer *renderer, const Game *game)
+{
+    const Pickup *nearby = NULL;
+    float player_x = game->player.position.x + PLAYER_SIZE / 2.0f;
+    float player_y = game->player.position.y + PLAYER_SIZE / 2.0f;
+    for (int index = 0; index < MAX_PICKUPS; ++index) {
+        const Pickup *pickup = &game->pickups[index];
+        if (!pickup->active) {
+            continue;
+        }
+        float dx = player_x - (pickup->position.x + 12.0f);
+        float dy = player_y - (pickup->position.y + 12.0f);
+        if (dx * dx + dy * dy < 6400.0f) {
+            nearby = pickup;
+            break;
+        }
+    }
+
+    char title[320];
+    int rate_percent = (int)(game->inventory.attack_rate_multiplier * 100.0f);
+    int speed_percent = (int)(game->inventory.speed_multiplier * 100.0f);
+    if (nearby != NULL) {
+        char price[32] = "";
+        if (nearby->price > 0) {
+            (void)snprintf(price, sizeof(price), " | Price: %d", nearby->price);
+        } else if (nearby->requires_key) {
+            (void)snprintf(price, sizeof(price), " | Requires 1 key");
+        }
+        (void)snprintf(title, sizeof(title),
+                       "Seed %u | HP %d/%d C:%d K:%d B:%d DMG:+%d RATE:%d%% SPD:%d%% PIERCE:%d | %s%s",
+                       game->floor.seed, game->player.health, game->player.maximum_health,
+                       game->inventory.coins, game->inventory.keys, game->inventory.bombs,
+                       game->inventory.damage_bonus, rate_percent, speed_percent,
+                       game->inventory.pierce_bonus, pickup_description(nearby->kind), price);
+    } else {
+        (void)snprintf(title, sizeof(title),
+                       "Seed %u | HP %d/%d C:%d K:%d B:%d DMG:+%d RATE:%d%% SPD:%d%% PIERCE:%d",
+                       game->floor.seed, game->player.health, game->player.maximum_health,
+                       game->inventory.coins, game->inventory.keys, game->inventory.bombs,
+                       game->inventory.damage_bonus, rate_percent, speed_percent,
+                       game->inventory.pierce_bonus);
+    }
+    SDL_SetWindowTitle(SDL_RenderGetWindow(renderer), title);
+}
 
 static void draw_health(SDL_Renderer *renderer, const Game *game)
 {
@@ -29,8 +93,9 @@ static void draw_door(SDL_Renderer *renderer, SDL_Rect door, bool open)
     }
 }
 
-static void draw_doors(SDL_Renderer *renderer, const Room *room)
+static void draw_doors(SDL_Renderer *renderer, const Floor *floor)
 {
+    const Room *room = floor_current_room_const(floor);
     SDL_Rect doors[DIRECTION_COUNT] = {
         { LOGICAL_WIDTH / 2 - 45, ROOM_INSET - 8, 90, 16 },
         { LOGICAL_WIDTH - ROOM_INSET - 8, LOGICAL_HEIGHT / 2 - 45, 16, 90 },
@@ -38,7 +103,8 @@ static void draw_doors(SDL_Renderer *renderer, const Room *room)
         { ROOM_INSET - 8, LOGICAL_HEIGHT / 2 - 45, 16, 90 },
     };
     for (int direction = 0; direction < DIRECTION_COUNT; ++direction) {
-        if ((room->door_mask & (1U << (unsigned int)direction)) != 0U) {
+        if ((room->door_mask & (1U << (unsigned int)direction)) != 0U &&
+            floor_connection_revealed(floor, floor->current_room, (Direction)direction)) {
             draw_door(renderer, doors[direction], room->doors_open);
         }
     }
@@ -63,7 +129,7 @@ static void draw_minimap(SDL_Renderer *renderer, const Floor *floor)
     const int map_center_y = 68;
     for (int index = 0; index < floor->room_count; ++index) {
         const Room *room = &floor->rooms[index];
-        if (!room->visited) {
+        if (!room->visited && !(room->type == ROOM_SECRET && room->revealed)) {
             continue;
         }
         set_room_color(renderer, room->type);
@@ -77,6 +143,37 @@ static void draw_minimap(SDL_Renderer *renderer, const Floor *floor)
             SDL_RenderFillRect(renderer, &cell);
         } else {
             SDL_RenderDrawRect(renderer, &cell);
+        }
+    }
+}
+
+static void draw_inventory(SDL_Renderer *renderer, const Game *game)
+{
+    const int values[3] = {
+        game->inventory.coins, game->inventory.keys, game->inventory.bombs
+    };
+    const SDL_Color colors[3] = {
+        { 236, 196, 62, 255 }, { 130, 190, 235, 255 }, { 115, 120, 132, 255 }
+    };
+    for (int group = 0; group < 3; ++group) {
+        SDL_SetRenderDrawColor(renderer, colors[group].r, colors[group].g,
+                               colors[group].b, colors[group].a);
+        int shown = values[group] > 10 ? 10 : values[group];
+        for (int index = 0; index < shown; ++index) {
+            SDL_Rect tally = { 42 + index * 8, 70 + group * 14, 6, 8 };
+            SDL_RenderFillRect(renderer, &tally);
+        }
+    }
+
+    if (game->inventory.has_active_item) {
+        for (int charge = 0; charge < game->inventory.active_charge_maximum; ++charge) {
+            if (charge < game->inventory.active_charge) {
+                SDL_SetRenderDrawColor(renderer, 248, 220, 74, 255);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 70, 72, 82, 255);
+            }
+            SDL_Rect segment = { 42 + charge * 18, 116, 14, 8 };
+            SDL_RenderFillRect(renderer, &segment);
         }
     }
 }
@@ -106,6 +203,7 @@ static void draw_overlay(SDL_Renderer *renderer, bool game_over)
 
 void renderer_draw(SDL_Renderer *renderer, const Game *game)
 {
+    update_window_title(renderer, game);
     const Room *room = floor_current_room_const(&game->floor);
     SDL_SetRenderDrawColor(renderer, 18, 20, 28, 255);
     SDL_RenderClear(renderer);
@@ -116,7 +214,7 @@ void renderer_draw(SDL_Renderer *renderer, const Game *game)
         LOGICAL_WIDTH - ROOM_INSET * 2, LOGICAL_HEIGHT - ROOM_INSET * 2
     };
     SDL_RenderDrawRect(renderer, &room_border);
-    draw_doors(renderer, room);
+    draw_doors(renderer, &game->floor);
 
     SDL_SetRenderDrawColor(renderer, 76, 82, 98, 255);
     for (int index = 0; index < room->wall_count; ++index) {
@@ -175,7 +273,46 @@ void renderer_draw(SDL_Renderer *renderer, const Game *game)
         SDL_RenderFillRect(renderer, &projectile_rect);
     }
 
+    for (int index = 0; index < MAX_PICKUPS; ++index) {
+        const Pickup *pickup = &game->pickups[index];
+        if (!pickup->active) {
+            continue;
+        }
+        if (pickup->kind == PICKUP_COIN) {
+            SDL_SetRenderDrawColor(renderer, 236, 196, 62, 255);
+        } else if (pickup->kind == PICKUP_KEY) {
+            SDL_SetRenderDrawColor(renderer, 130, 190, 235, 255);
+        } else if (pickup->kind == PICKUP_BOMB) {
+            SDL_SetRenderDrawColor(renderer, 115, 120, 132, 255);
+        } else if (pickup->kind == PICKUP_HEALTH) {
+            SDL_SetRenderDrawColor(renderer, 238, 72, 72, 255);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 80, 220, 150, 255);
+        }
+        SDL_Rect pickup_rect = {
+            (int)pickup->position.x, (int)pickup->position.y, 24, 24
+        };
+        SDL_RenderFillRect(renderer, &pickup_rect);
+        if (pickup->price > 0) {
+            SDL_SetRenderDrawColor(renderer, 236, 196, 62, 255);
+            SDL_Rect price_marker = { pickup_rect.x + 7, pickup_rect.y + 27, 10, 5 };
+            SDL_RenderFillRect(renderer, &price_marker);
+        }
+    }
+
+    SDL_SetRenderDrawColor(renderer, 72, 72, 82, 255);
+    for (int index = 0; index < MAX_BOMBS; ++index) {
+        const Bomb *bomb = &game->placed_bombs[index];
+        if (bomb->active) {
+            SDL_Rect bomb_rect = {
+                (int)bomb->position.x - 9, (int)bomb->position.y - 9, 18, 18
+            };
+            SDL_RenderFillRect(renderer, &bomb_rect);
+        }
+    }
+
     draw_health(renderer, game);
+    draw_inventory(renderer, game);
     draw_minimap(renderer, &game->floor);
     if (game->paused || game->game_over) {
         draw_overlay(renderer, game->game_over);

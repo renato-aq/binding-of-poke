@@ -73,6 +73,27 @@ static int choose_unassigned_room(const Floor *floor, Random *random, int exclud
     return count == 0 ? -1 : candidates[random_range(random, count)];
 }
 
+static int choose_secret_room(const Floor *floor, Random *random, int excluded)
+{
+    int candidates[MAX_FLOOR_ROOMS];
+    int count = 0;
+    for (int index = 1; index < floor->room_count; ++index) {
+        if (index == excluded || floor->rooms[index].type != ROOM_COMBAT) {
+            continue;
+        }
+        int degree = 0;
+        for (int direction = 0; direction < DIRECTION_COUNT; ++direction) {
+            if (floor_neighbor(floor, index, (Direction)direction) >= 0) {
+                ++degree;
+            }
+        }
+        if (degree == 1) {
+            candidates[count++] = index;
+        }
+    }
+    return count == 0 ? -1 : candidates[random_range(random, count)];
+}
+
 static void assign_room_types(Floor *floor, Random *random)
 {
     floor->rooms[0].type = ROOM_START;
@@ -97,7 +118,10 @@ static void assign_room_types(Floor *floor, Random *random)
     if (shop >= 0) {
         floor->rooms[shop].type = ROOM_SHOP;
     }
-    int secret = choose_unassigned_room(floor, random, boss_index);
+    int secret = choose_secret_room(floor, random, boss_index);
+    if (secret < 0) {
+        secret = choose_unassigned_room(floor, random, boss_index);
+    }
     if (secret >= 0) {
         floor->rooms[secret].type = ROOM_SECRET;
     }
@@ -166,6 +190,16 @@ bool floor_generate(Floor *floor, uint32_t seed)
                         room->type == ROOM_SHOP || room->type == ROOM_SECRET;
         room->doors_open = room->cleared;
         room->visited = room->type == ROOM_START;
+        room->revealed = room->type != ROOM_SECRET;
+        if (room->type == ROOM_SECRET) {
+            int degree = 0;
+            for (int direction = 0; direction < DIRECTION_COUNT; ++direction) {
+                if (floor_neighbor(floor, index, (Direction)direction) >= 0) {
+                    ++degree;
+                }
+            }
+            room->revealed = degree != 1;
+        }
     }
     return floor_validate(floor);
 }
@@ -224,4 +258,10 @@ Room *floor_current_room(Floor *floor)
 const Room *floor_current_room_const(const Floor *floor)
 {
     return &floor->rooms[floor->current_room];
+}
+
+bool floor_connection_revealed(const Floor *floor, int room_index, Direction direction)
+{
+    int neighbor = floor_neighbor(floor, room_index, direction);
+    return neighbor >= 0 && floor->rooms[neighbor].revealed;
 }
